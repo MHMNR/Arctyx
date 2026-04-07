@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+setup/state/*.local.json
+setup/state/*.tmp.json
+
+*.log
+*.tmp
+*.bak
+*.old
+
+.cache/
+.env
+.DS_Store

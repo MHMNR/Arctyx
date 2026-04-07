@@ -1,0 +1,2 @@
+# Arctyx's active installer uses the Python standard library only.
+# No required external Python dependencies.

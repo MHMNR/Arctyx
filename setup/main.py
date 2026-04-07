@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import argparse
+import subprocess
+import shutil
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from setup.bridge.executor import BackendExecutor, StateStore
+
+
+def run_app(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Arctyx modular installer")
+    parser.add_argument(
+        "--action",
+        default="wizard",
+        choices=["wizard", "plan", "apply", "rollback", "uninstall"],
+        help="Wizard launches the interactive Meowrch-style installer; other actions run the backend directly.",
+    )
+    parser.add_argument("--state", default=None, help="Path to state JSON file")
+    args = parser.parse_args(argv)
+
+    state_store = StateStore()
+    if args.state:
+        state_store.path = Path(args.state)
+    state_store.ensure()
+
+    executor = BackendExecutor(state_path=Path(state_store.path))
+
+    def _run_backend_action(action: str) -> int:
+        if shutil.which("jq") is None:
+            print("Arctyx backend needs `jq` to read the JSON state. Please install `jq` first, then run again.")
+            return 1
+        try:
+            executor.run(action)
+        except KeyboardInterrupt:
+            print("\nArctyx backend action was cancelled by the user.")
+            return 130
+        except subprocess.CalledProcessError as exc:
+            print(f"Arctyx backend action failed with exit code {exc.returncode}.")
+            return exc.returncode or 1
+        except Exception as exc:
+            print(f"Arctyx backend action failed: {exc}")
+            return 1
+        return 0
+
+    if args.action != "wizard":
+        return _run_backend_action(args.action)
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("Arctyx wizard needs an interactive TTY. Use --action plan/apply for non-interactive runs.")
+        return 1
+
+    try:
+        from setup.ui.wizard import WizardInstaller
+    except ModuleNotFoundError as exc:
+        if exc.name == "curses":
+            print("The Python curses module is unavailable in this environment.")
+            return 1
+        raise
+
+    app = WizardInstaller(state_path=state_store.path)
+    result = app.run()
+    if result in {"apply", "plan", "rollback", "uninstall"}:
+        return _run_backend_action(result)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(run_app())
+    except KeyboardInterrupt:
+        print("\nArctyx was cancelled by the user.")
+        raise SystemExit(130)
