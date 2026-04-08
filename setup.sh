@@ -556,6 +556,31 @@ startup_collect_missing_dependencies() {
   printf '%s\n' "${missing[*]:-}"
 }
 
+<<<<<<< HEAD
+=======
+startup_confirm_dependency_install() {
+  local missing_text="$1"
+  local pushed="no"
+
+  ui_push && pushed="yes"
+  startup_choose_option \
+    "Runtime Dependencies Required" \
+    "ARCTYX needs a few required packages before the installer can start." \
+    "Install|Install missing packages automatically: $missing_text" \
+    "Exit|Close ARCTYX without installing the required packages"
+  case "$STARTUP_MENU_SELECTION" in
+    0)
+      [[ "$pushed" == "yes" ]] && ui_pop
+      return 0
+      ;;
+    *)
+      [[ "$pushed" == "yes" ]] && ui_pop
+      return 1
+      ;;
+  esac
+}
+
+>>>>>>> 5974abe (Refine startup dependency bootstrap flow)
 startup_draw_progress_panel() {
   local title="$1"
   local message="$2"
@@ -653,6 +678,7 @@ startup_prepare_runtime() {
 
   missing_text="$(startup_collect_missing_dependencies)"
   if [[ -n "$missing_text" ]]; then
+    startup_confirm_dependency_install "$missing_text" || exit 1
     read -r -a missing <<<"$missing_text"
     startup_install_missing_dependencies "${missing[@]}" || {
       err "Failed to prepare required dependencies."
