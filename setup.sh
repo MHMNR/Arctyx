@@ -556,8 +556,6 @@ startup_collect_missing_dependencies() {
   printf '%s\n' "${missing[*]:-}"
 }
 
-<<<<<<< HEAD
-=======
 startup_confirm_dependency_install() {
   local missing_text="$1"
   local pushed="no"
@@ -580,7 +578,6 @@ startup_confirm_dependency_install() {
   esac
 }
 
->>>>>>> 5974abe (Refine startup dependency bootstrap flow)
 startup_draw_progress_panel() {
   local title="$1"
   local message="$2"
