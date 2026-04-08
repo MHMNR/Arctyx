@@ -136,6 +136,17 @@ DETECTED_XFCE="no"
 DETECTED_DM="none"
 
 if [[ -t 2 ]] && command -v tput >/dev/null 2>&1; then
+  if ! tput sgr0 >/dev/null 2>&1; then
+    for fallback_term in xterm-256color xterm screen-256color linux; do
+      if TERM="$fallback_term" tput sgr0 >/dev/null 2>&1; then
+        export TERM="$fallback_term"
+        break
+      fi
+    done
+  fi
+fi
+
+if [[ -t 2 ]] && command -v tput >/dev/null 2>&1 && tput sgr0 >/dev/null 2>&1; then
   C_RESET="$(tput sgr0)"
   C_BOLD="$(tput bold)"
   C_TEXT="$(tput setaf 7)"
