@@ -545,9 +545,41 @@ startup_collect_missing_dependencies() {
   printf '%s\n' "${missing[*]:-}"
 }
 
+startup_draw_progress_panel() {
+  local title="$1"
+  local message="$2"
+  local missing_text="$3"
+
+  startup_draw_box \
+    "$title" \
+    "$message" \
+    "" \
+    "Missing: $missing_text" \
+    "" \
+    "Status" \
+    ""
+  tput sc >&2
+}
+
+startup_update_progress_panel() {
+  local spinner="$1"
+  local status_text="$2"
+  local detail_text="$3"
+
+  tput rc >&2
+  tput el >&2
+  printf ' %b%s%b %b%s%b\n' \
+    "$C_BOLD$C_PEACH" "$spinner" "$C_RESET" \
+    "$C_BOLD$C_ROSEWATER" "$status_text" "$C_RESET" >&2
+
+  tput el >&2
+  printf '   %b%s%b\n' "$C_OVERLAY1" "$(truncate_text "$detail_text" 96)" "$C_RESET" >&2
+}
+
 startup_install_missing_dependencies() {
   local missing=("$@")
   local log_file spinner_pid rc frame_idx
+  local last_log_line status_text detail_text pushed="no"
   local frames=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
 
   startup_wait_for_network || return 1
@@ -560,19 +592,18 @@ startup_install_missing_dependencies() {
   ) >"$log_file" 2>&1 &
   spinner_pid=$!
 
-  if command -v tput >/dev/null 2>&1; then
-    tput civis >/dev/null 2>&1 || true
-  fi
+  ui_push && pushed="yes"
+  startup_draw_progress_panel \
+    "Installing Missing Dependencies" \
+    "Preparing runtime requirements for ARCTYX..." \
+    "${missing[*]}"
 
   frame_idx=0
   while kill -0 "$spinner_pid" >/dev/null 2>&1; do
-    startup_draw_box \
-      "Installing Missing Dependencies" \
-      "Preparing runtime requirements for ARCTYX..." \
-      "" \
-      "Missing: ${missing[*]}" \
-      "" \
-      "${frames[$frame_idx]} Installing in background"
+    last_log_line="$(tail -n 1 "$log_file" 2>/dev/null | sed 's/\t/  /g')"
+    status_text="Installing Required Packages"
+    detail_text="${last_log_line:-Working in background...}"
+    startup_update_progress_panel "${frames[$frame_idx]}" "$status_text" "$detail_text"
     frame_idx=$(((frame_idx + 1) % ${#frames[@]}))
     sleep 0.12
   done
@@ -580,9 +611,7 @@ startup_install_missing_dependencies() {
   wait "$spinner_pid"
   rc=$?
 
-  if command -v tput >/dev/null 2>&1; then
-    tput cnorm >/dev/null 2>&1 || true
-  fi
+  [[ "$pushed" == "yes" ]] && ui_pop
 
   if [[ "$rc" -ne 0 ]]; then
     startup_draw_box \
