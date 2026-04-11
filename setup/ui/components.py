@@ -115,23 +115,27 @@ class WizardUI:
                 cur_x += len(clipped)
 
     def _status_attr_for_text(self, text: str, active: bool = False) -> int:
+        if active:
+            return self.palette["active"]
         normalized = text.strip().lower()
         if not normalized:
-            return self.palette["status_active"] if active else self.palette["status"]
+            return self.palette["status"]
         if "driver" in normalized:
-            return self.palette["status_active"] if active else self.palette["status"]
+            return self.palette["status"]
         positive_tokens = ("yes", "enable", "enabled", "install", "installed", "on", "true")
         negative_tokens = ("no", "disable", "disabled", "skip", "off", "false")
         if any(token in normalized for token in positive_tokens):
-            return self.palette["choice_yes"] if not active else self.palette["status_active"]
+            return self.palette["choice_yes"]
         if any(token in normalized for token in negative_tokens):
-            return self.palette["choice_no"] if not active else self.palette["status_active"]
-        return self.palette["status_active"] if active else self.palette["status"]
+            return self.palette["choice_no"]
+        return self.palette["status"]
 
     def _status_segments(self, text: str, active: bool = False) -> list[tuple[str, int]]:
-        default_attr = self.palette["status_active"] if active else self.palette["status"]
         if not text:
             return []
+        if active:
+            return [(text, self.palette["active"])]
+        default_attr = self.palette["status"]
         if "driver" in text.lower():
             return [(text, default_attr)]
         segments: list[tuple[str, int]] = []
@@ -150,7 +154,9 @@ class WizardUI:
             segments.append((token, attr))
         return segments
 
-    def _secondary_status_attr(self, text: str) -> int:
+    def _secondary_status_attr(self, text: str, active: bool = False) -> int:
+        if active:
+            return self.palette["active"]
         normalized = text.strip().lower()
         if normalized == "installed":
             return self.palette["choice_yes"]
@@ -219,7 +225,7 @@ class WizardUI:
                         current_row,
                         secondary_x,
                         self._truncate(secondary, max(8, width - secondary_x - 1)),
-                        self._secondary_status_attr(secondary),
+                        self._secondary_status_attr(secondary, active),
                     )
             else:
                 self._draw_segments(
@@ -240,7 +246,7 @@ class WizardUI:
                         current_row,
                         secondary_x,
                         self._truncate(secondary, max(8, width - secondary_x - 1)),
-                        self._secondary_status_attr(secondary),
+                        self._secondary_status_attr(secondary, active),
                     )
             current_row += 1
         return current_row
@@ -432,8 +438,6 @@ class WizardUI:
             _safe_addstr(self.stdscr, row, 2, line, self.palette["title"])
             row += 1
         row += 1
-        _safe_addstr(self.stdscr, row, 3, "ARCTYX", self.palette["title"])
-        row += 1
         _safe_addstr(self.stdscr, row, 3, "A modern, modular system setup tool", self.palette["subtitle"])
         row += 2
         _safe_addstr(self.stdscr, row, 3, "→ Clean setup", self.palette["preview"])
@@ -507,6 +511,9 @@ class WizardUI:
         key = self.stdscr.getch()
         if key == 3:
             return "force_quit"
+        if key == curses.KEY_RESIZE:
+            self.stdscr.clear()
+            return "resize"
         if key == curses.KEY_MOUSE:
             try:
                 curses.getmouse()
@@ -543,6 +550,9 @@ class WizardUI:
         key = self.stdscr.getch()
         if key == 3:
             return "force_quit"
+        if key == curses.KEY_RESIZE:
+            self.stdscr.clear()
+            return "resize"
         if key == curses.KEY_MOUSE:
             try:
                 curses.getmouse()
@@ -568,7 +578,7 @@ class WizardUI:
             row = self.draw_step_title(row, "Quit Arctyx", "A setup task is still in progress. Quit now?")
             rendered = [(value, label, i == index, "") for i, (value, label) in enumerate(options)]
             self.draw_choice_rows(row, rendered, selected_index=index, mode="radio")
-            self.draw_footer("▲/▼ Move • ◀ Back • ▶ Confirm • Enter Confirm")
+            self.draw_footer("▲/▼ Move • ◀ Back • ▶ Confirm • Enter Confirm • Ctrl+C Quit")
             self.refresh()
 
             key = self.read_key()
@@ -576,11 +586,13 @@ class WizardUI:
                 index = (index - 1) % len(options)
             elif key == "down":
                 index = (index + 1) % len(options)
+            elif key in {"mouse", "resize"}:
+                continue
             elif key == "enter":
                 return options[index][0] == "quit"
             elif key in {"back", "left"}:
                 return False
-            elif key in {"enter", "right"}:
+            elif key == "right":
                 return options[index][0] == "quit"
             elif key == "force_quit":
                 index = 1
@@ -611,7 +623,7 @@ class WizardUI:
                 index = (index - 1) % len(choices)
             elif key == "down":
                 index = (index + 1) % len(choices)
-            elif key == "mouse":
+            elif key in {"mouse", "resize"}:
                 continue
             elif key in {"back", "left"}:
                 self._remember_cursor("yesno", title, option_values, index)
@@ -655,7 +667,7 @@ class WizardUI:
                 index = (index - 1) % len(options)
             elif key == "down":
                 index = (index + 1) % len(options)
-            elif key == "mouse":
+            elif key in {"mouse", "resize"}:
                 continue
             elif key in {"back", "left"}:
                 self._remember_cursor("radio", title, option_values, index)
@@ -705,7 +717,7 @@ class WizardUI:
                 index = (index - 1) % len(options)
             elif key == "down":
                 index = (index + 1) % len(options)
-            elif key == "mouse":
+            elif key in {"mouse", "resize"}:
                 continue
             elif key in {"back", "left"}:
                 self._remember_cursor("menu", title, option_values, index)
@@ -735,7 +747,7 @@ class WizardUI:
             rendered = [(value, label, value in selected, secondary) for value, label, _detail, secondary in normalized_options]
             options_end_row = self.draw_choice_rows(row, rendered, selected_index=index, mode="checkbox")
             self.draw_detail_block(options_end_row + 1, "Details", normalized_options[index][2])
-            self.draw_footer("▲/▼ Move • ◀ Back • Space Toggle • D Done • Enter Confirm • Ctrl+C Quit")
+            self.draw_footer("▲/▼ Move • ◀ Back • Space Toggle • Enter/D Done • Ctrl+C Quit")
             self.refresh()
 
             key = self.read_key()
@@ -743,7 +755,7 @@ class WizardUI:
                 index = (index - 1) % len(options)
             elif key == "down":
                 index = (index + 1) % len(options)
-            elif key == "mouse":
+            elif key in {"mouse", "resize"}:
                 continue
             elif key in {"back", "left"}:
                 self._remember_cursor("checkbox", title, option_values, index)
@@ -794,7 +806,7 @@ class WizardUI:
                         value.pop()
                 elif key == "back":
                     return BACK
-                elif key == "mouse":
+                elif key in {"mouse", "resize"}:
                     continue
                 elif key == "force_quit":
                     if self._maybe_force_quit():
@@ -820,7 +832,7 @@ class WizardUI:
                 selected_index=index,
                 mode="radio",
             )
-            self.draw_footer("Y/N Confirm • ◀ Back • ▶ Confirm • Ctrl+C Quit")
+            self.draw_footer("Y/N Confirm • ▲/▼ Move • ◀ Back • ▶ Confirm • Ctrl+C Quit")
             self.refresh()
 
             key = self.read_key()
@@ -834,7 +846,7 @@ class WizardUI:
                 return True
             if key == "no":
                 return False
-            if key == "mouse":
+            if key in {"mouse", "resize"}:
                 continue
             if key in {"back", "left"}:
                 return BACK
@@ -880,11 +892,11 @@ class WizardUI:
             row += 2
             self.draw_choice_rows(
                 row,
-                [("yes", "Yes", index == 0, ""), ("no", "No", index == 1, "")],
+                [("yes", "Apply Now", index == 0, ""), ("no", "Go Back", index == 1, "")],
                 selected_index=index,
                 mode="radio",
             )
-            self.draw_footer("Y/N Confirm • ◀ Back • ▶ Confirm • Ctrl+C Quit")
+            self.draw_footer("Y/N Confirm • ▲/▼ Move • ◀ Back • ▶ Confirm • Ctrl+C Quit")
             self.refresh()
 
             key = self.read_key()
@@ -898,7 +910,7 @@ class WizardUI:
                 return True
             if key == "no":
                 return False
-            if key == "mouse":
+            if key in {"mouse", "resize"}:
                 continue
             if key in {"back", "left"}:
                 return BACK
@@ -908,7 +920,7 @@ class WizardUI:
                 if self._maybe_force_quit():
                     raise KeyboardInterrupt
 
-    def show_message(self, title: str, message: str, footer: str = "Press Enter To Continue") -> None:
+    def show_message(self, title: str, message: str, footer: str = "Enter Continue • Ctrl+C Quit") -> None:
         while True:
             self.clear()
             row = self.draw_header()
@@ -922,7 +934,7 @@ class WizardUI:
             key = self.read_key()
             if key in {"enter", "space", "right", "yes", "no"}:
                 return
-            if key == "mouse":
+            if key in {"mouse", "resize"}:
                 continue
             if key in {"back", "left"}:
                 return
@@ -950,7 +962,7 @@ class WizardUI:
                 index = (index - 1) % len(options)
             elif key == "down":
                 index = (index + 1) % len(options)
-            elif key == "mouse":
+            elif key in {"mouse", "resize"}:
                 continue
             elif key in {"enter", "space", "right"}:
                 self._remember_cursor("menu", "welcome", option_values, index)
@@ -979,7 +991,7 @@ class WizardUI:
                 index = (index - 1) % len(options)
             elif key == "down":
                 index = (index + 1) % len(options)
-            elif key == "mouse":
+            elif key in {"mouse", "resize"}:
                 continue
             elif key in {"back", "left"}:
                 self._remember_cursor("menu", "resume-state", option_values, index)

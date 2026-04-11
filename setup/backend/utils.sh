@@ -158,9 +158,8 @@ backend_load_state() {
   DRIVER_SELECTED_PKGS_AUR="$(backend_json_array_to_words '.drivers.aur_packages // []')"
 
   BOOT_TUNE_ENABLE="$(backend_json_bool_to_yesno "$(jq -r '.boot.enabled // true' "$STATE_FILE")")"
-  BOOT_SILENT="$(backend_json_bool_to_yesno "$(jq -r '.boot.silent // true' "$STATE_FILE")")"
-  BOOT_OS_PROBER="$(backend_json_bool_to_yesno "$(jq -r '.boot.os_prober // true' "$STATE_FILE")")"
-  BOOT_PLYMOUTH_ACTION="$(jq -r '.boot.plymouth_action // "skip"' "$STATE_FILE")"
+  BOOT_SPLASH_MODE="$(jq -r '.boot.splash_mode // "skip"' "$STATE_FILE")"
+  BOOT_OS_PROBER_ACTION="$(jq -r '.boot.os_prober_action // "skip"' "$STATE_FILE")"
   BOOTLOADER_ACTION="$(jq -r '.boot.bootloader_action // empty' "$STATE_FILE")"
   if [[ -z "$BOOTLOADER_ACTION" ]]; then
     if [[ "$(jq -r '.boot.replace_bootloader // false' "$STATE_FILE")" == "true" ]]; then

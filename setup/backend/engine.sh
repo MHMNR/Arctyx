@@ -22,6 +22,17 @@ source "$ENGINE_DIR/boot.sh"
 # shellcheck disable=SC1091
 source "$ENGINE_DIR/preflight.sh"
 
+backend_ensure_runtime_dependencies() {
+  if command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "[backend] Installing required dependency: jq"
+  pacman -S --needed --noconfirm jq || {
+    echo "[backend:error] Failed to install jq. Cannot continue." >&2
+    exit 1
+  }
+}
+
 backend_apply() {
   local auth_pkg
   backend_user_prepare
@@ -53,6 +64,7 @@ main() {
     exit 1
   fi
 
+  backend_ensure_runtime_dependencies
   backend_load_state "$state_file"
   action="${2:-$(backend_state_action)}"
   backend_print_state_summary
@@ -77,4 +89,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

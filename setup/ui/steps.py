@@ -32,10 +32,12 @@ from setup.ui.state import (
     install_profile_label,
     LOGIN_METHOD_CHOICES,
     login_method_label,
+    OS_PROBER_CHOICES,
+    os_prober_action_label,
     PACKAGE_CATEGORY_CHOICES,
     package_category_label,
-    PLYMOUTH_CHOICES,
-    plymouth_action_label,
+    SPLASH_MODE_CHOICES,
+    splash_mode_label,
     SHELL_CHOICES,
     shell_label,
     WizardState,
@@ -62,7 +64,7 @@ def _package_group_detail(group_key: str) -> str:
         "core-system": "Installs the core command-line foundation used in most Arctyx setups.\nPackages: base-devel, git, curl, wget, ca-certificates, openssh, rsync, unzip, zip, tar, gzip, bzip2, xz, man-db, man-pages",
         "cli-utils": "Adds daily terminal tools for terminal workflow.\nPackages: ripgrep, fd, fzf, bat, eza, tree, jq, yq, htop, btop, ncdu, tmux, neovim, nano, fastfetch",
         "dev-toolchain": "Adds common compilers and language runtimes for development work.\nPackages: gcc, make, cmake, meson, ninja, pkgconf, python, python-pip, nodejs, npm, go, rustup",
-        "networking": "Installs connection, DNS, and troubleshooting tools.\nPackages: networkmanager, network-manager-applet, dnsutils, inetutils, nmap, traceroute",
+        "networking": "Installs connection, DNS, and troubleshooting tools.\nPackages: networkmanager, network-manager-applet, bind-tools, inetutils, nmap, traceroute",
         "desktop-common": "Installs desktop support utilities and file integration tools.\nPackages: xdg-utils, gvfs, gvfs-mtp, gvfs-smb, gvfs-afc, gvfs-gphoto2, gvfs-nfs, file-roller, p7zip, unarchiver",
     }
     return details.get(group_key, "")
@@ -190,6 +192,8 @@ def _app_item_detail(category_key: str, value: str, label: str) -> str:
         "onlyoffice-bin": "Office suite with strong Microsoft Office document compatibility.",
         "obsidian": "Markdown knowledge-base and note-taking app built around linked notes.",
         "joplin": "Open note-taking app with sync support, markdown editing, and to-do organization.",
+        "virt-manager": "QEMU-based virtual machine manager with a GUI. Ideal for running full VMs with KVM acceleration on Linux.",
+        "virtualbox": "Oracle VirtualBox for running virtual machines. Good for testing other operating systems or running Windows apps.",
     }
     package_map = {
         "thunar": "Repo: thunar",
@@ -208,6 +212,7 @@ def _app_item_detail(category_key: str, value: str, label: str) -> str:
         "code": "Repo: code",
         "codium": "AUR: vscodium-bin",
         "cursor": "AUR: cursor-bin",
+        "antigravity": "AUR: antigravity",
         "zed": "Repo: zed",
         "neovim": "Repo: neovim",
         "emacs": "Repo: emacs",
@@ -235,7 +240,7 @@ def _app_item_detail(category_key: str, value: str, label: str) -> str:
         "inkscape": "Repo: inkscape",
         "darktable": "Repo: darktable",
         "kdenlive": "Repo: kdenlive",
-        "shotcut": "AUR: shotcut-bin",
+        "shotcut": "Repo: shotcut",
         "davinci-resolve": "AUR: davinci-resolve",
         "obs-studio": "Repo: obs-studio",
         "blender": "Repo: blender",
@@ -284,7 +289,7 @@ def _app_item_detail(category_key: str, value: str, label: str) -> str:
         "goverlay": "Repo: goverlay",
         "okular": "Repo: okular",
         "evince": "Repo: evince",
-        "zathura": "Repo: zathura",
+        "zathura": "Repo: zathura + zathura-pdf-mupdf",
         "calibre": "Repo: calibre",
         "foliate": "Repo: foliate",
         "papers": "Repo: papers",
@@ -292,6 +297,8 @@ def _app_item_detail(category_key: str, value: str, label: str) -> str:
         "onlyoffice-bin": "AUR: onlyoffice-bin",
         "obsidian": "Repo: obsidian",
         "joplin": "AUR: joplin-desktop",
+        "virt-manager": "Repo: virt-manager qemu-full libvirt dnsmasq",
+        "virtualbox": "Repo: virtualbox virtualbox-host-dkms",
     }
     description = description_map.get(value, f"{label} application for this category.")
     package_info = package_map.get(value, value)
@@ -304,6 +311,7 @@ def _app_installed(value: str) -> bool:
         "code": ["code"],
         "codium": ["vscodium-bin", "vscodium"],
         "cursor": ["cursor-bin", "cursor"],
+        "antigravity": ["antigravity"],
         "jetbrains-toolbox": ["jetbrains-toolbox"],
         "sublime-text": ["sublime-text-4"],
         "chrome": ["google-chrome"],
@@ -313,7 +321,7 @@ def _app_installed(value: str) -> bool:
         "librewolf": ["librewolf-bin"],
         "floorp": ["floorp-bin"],
         "vivaldi": ["vivaldi"],
-        "shotcut": ["shotcut-bin"],
+        "shotcut": ["shotcut"],
         "davinci-resolve": ["davinci-resolve"],
         "vesktop": ["vesktop-bin", "vesktop"],
         "slack-desktop": ["slack-desktop-wayland", "slack-desktop"],
@@ -344,11 +352,14 @@ def _app_installed(value: str) -> bool:
         "onlyoffice-bin": ["onlyoffice-bin"],
         "obsidian": ["obsidian"],
         "joplin": ["joplin-desktop"],
+        "virt-manager": ["virt-manager"],
+        "virtualbox": ["virtualbox"],
     }
     command_map = {
         "code": ["code"],
         "codium": ["codium"],
         "cursor": ["cursor"],
+        "antigravity": ["antigravity"],
         "zed": ["zeditor", "zed"],
         "neovim": ["nvim"],
         "emacs": ["emacs"],
@@ -387,6 +398,8 @@ def _app_installed(value: str) -> bool:
         "easyeffects": ["easyeffects"],
         "pavucontrol": ["pavucontrol"],
         "obsidian": ["obsidian"],
+        "virt-manager": ["virt-manager"],
+        "virtualbox": ["virtualbox"],
     }
     package_candidates = package_map.get(value, [value])
     command_candidates = command_map.get(value, [])
@@ -475,7 +488,7 @@ def _desktop_choice_detail(value: str, label: str) -> str:
 
 def _driver_group_detail(group_key: str) -> str:
     details = {
-        "gpu": "Graphics drivers and GPU acceleration packages.\nAvailable packages: nvidia-open-dkms, nvidia-open, nvidia-dkms, nvidia, nvidia-utils, nvidia-settings, linux-headers, mesa, vulkan-radeon, lib32-vulkan-radeon, vulkan-intel, lib32-vulkan-intel, intel-media-driver, xf86-video-amdgpu",
+        "gpu": "Graphics drivers and GPU acceleration packages.\nAvailable packages: nvidia-580xx-dkms, nvidia-open-dkms, nvidia-open, nvidia-dkms, nvidia, nvidia-utils, nvidia-settings, egl-wayland, linux-headers, mesa, vulkan-radeon, libva-mesa-driver, lib32-mesa, lib32-vulkan-radeon, lib32-libva-mesa-driver, vulkan-intel, lib32-vulkan-intel, intel-media-driver, xf86-video-amdgpu",
         "chipset": "Microcode and platform firmware updates for CPU and chipset support.\nAvailable packages: intel-ucode, amd-ucode, fwupd",
         "network": "Wi-Fi, Bluetooth, and networking stack packages.\nAvailable packages: networkmanager, iwd, wpa_supplicant, bluez, bluez-utils, broadcom-wl-dkms",
         "others": "Extra firmware and supporting hardware packages.\nAvailable packages: linux-firmware, sof-firmware",
@@ -767,7 +780,7 @@ def _section_status(state: WizardState, section_key: str) -> str:
             bootloader_status = "Fix Current One"
         else:
             bootloader_status = "Keep Current"
-        return f"Bootloader {bootloader_status} | OS-Prober {_bool_label(state.boot_os_prober)}"
+        return f"Bootloader {bootloader_status} | OS-Prober {os_prober_action_label(state.boot_os_prober_action)}"
     if section_key == "finalize":
         return "Review And Apply"
     return ""
@@ -841,8 +854,7 @@ def _section_detail(state: WizardState, section_key: str) -> str:
     if section_key == "boot":
         lines = [
             f"Bootloader Action: {bootloader_action_label(state.bootloader_action)}",
-            f"Silent Boot: {_bool_label(state.boot_silent)} | OS-Prober: {_bool_label(state.boot_os_prober)}",
-            f"Plymouth: {plymouth_action_label(state.boot_plymouth_action)}",
+            f"Splash Mode: {splash_mode_label(state.boot_splash_mode)} | OS-Prober: {os_prober_action_label(state.boot_os_prober_action)}",
         ]
         if state.bootloader_action == "replace":
             lines.insert(1, f"Replacement Bootloader: {bootloader_label(state.bootloader_choice)}")
@@ -861,7 +873,7 @@ def step_section_menu(ui: WizardUI, state: WizardState) -> str:
         for section_key, label in SECTION_ORDER
     ]
     return ui.ask_menu(
-        "Installer",
+        "Arctyx Setup",
         options,
         subtitle="Open a section, configure it, then return here until you are ready to apply.",
         footer="▲/▼ Move • ◀ Back • ▶ Open Section • Enter Open Section • Ctrl+C Quit",
@@ -938,7 +950,7 @@ def step_packages(ui: WizardUI, state: WizardState) -> None:
             if selected != BACK:
                 state.enable_chaotic_aur = selected
         elif choice == "shell":
-            selected = ui.ask_radio("Select Shell", SHELL_CHOICES, state.shell_choice)
+            selected = ui.ask_radio("Shell", SHELL_CHOICES, state.shell_choice)
             if selected != BACK:
                 state.shell_choice = selected
         elif choice == "aur":
@@ -1135,8 +1147,23 @@ def _bootloader_choice_detail(state: WizardState) -> str:
     return f"Replacement Bootloader: {bootloader_label(state.bootloader_choice)}\n\n{detail_map.get(state.bootloader_choice, '')}"
 
 
-def _boot_bool_detail(label: str, value: bool) -> str:
-    return f"{label}: {_bool_label(value)}"
+def _boot_splash_detail(state: WizardState) -> str:
+    details = {
+        "skip": "Leave the current boot output mode untouched.",
+        "silent": "Hide all boot text and log output. Screen smoothly transitions from the vendor logo to the display manager without Plymouth.",
+        "plymouth": "Hide boot logs and use Plymouth to display graphical animations like a spinning progress bar or OS logo during boot.",
+        "verbose": "Disable silent boot options. Show typical raw systemd and linux log outputs during startup.",
+    }
+    return f"Boot Splash Mode: {splash_mode_label(state.boot_splash_mode)}\n\n{details.get(state.boot_splash_mode, '')}"
+
+
+def _boot_os_prober_detail(state: WizardState) -> str:
+    details = {
+        "skip": "Leave current OS prober configuration alone.",
+        "on": "Permit OS-prober to run when generating GRUB config so it can find Window/other Linux installs.",
+        "off": "Prevent OS-prober from running, saving generation time if you only run Arctyx.",
+    }
+    return f"OS-Prober Action: {os_prober_action_label(state.boot_os_prober_action)}\n\n{details.get(state.boot_os_prober_action, '')}"
 
 
 def _effective_autologin(state: WizardState) -> bool:
@@ -1165,12 +1192,6 @@ def _autostart_mode_label(state: WizardState) -> str:
     if state.autostart_session == "custom":
         return "Custom"
     return autostart_session_label(state.autostart_session)
-
-
-def _boot_plymouth_detail(state: WizardState) -> str:
-    detected = "Enabled" if state.detected_plymouth_enabled else "Disabled"
-    return f"Plymouth Action: {plymouth_action_label(state.boot_plymouth_action)}\nDetected Status: {detected}"
-
 
 def step_apps(ui: WizardUI, state: WizardState) -> None:
     while True:
@@ -1231,7 +1252,7 @@ def step_desktop(ui: WizardUI, state: WizardState) -> None:
                 ("profile", "Install Profile", desktop_profile_label(state.desktop_profile), "", _desktop_profile_detail(state)),
                 ("done", "Done", "", ""),
             ],
-            subtitle="Restore the Old Desktop/WM Section as Nested Menus",
+            subtitle="Choose desktop environments or window managers to install",
         )
         if choice == BACK:
             return
@@ -1304,7 +1325,7 @@ def step_login(ui: WizardUI, state: WizardState) -> None:
             previous_method = state.login_method
             previous_display_manager = state.display_manager
             previous_autologin = state.autologin
-            selected = ui.ask_radio("Select Login Method", LOGIN_METHOD_CHOICES, state.login_method)
+            selected = ui.ask_radio("Login Method", LOGIN_METHOD_CHOICES, state.login_method)
             if selected == BACK:
                 continue
             state.login_method = selected
@@ -1313,7 +1334,7 @@ def step_login(ui: WizardUI, state: WizardState) -> None:
                 state.display_manager = "none"
             elif selected == "display-manager":
                 dm_selected = ui.ask_radio(
-                    "Select Display Manager",
+                    "Display Manager",
                     [(value, label, detail, _display_manager_status_text(value)) for value, label, detail in DISPLAY_MANAGER_CHOICES],
                     state.display_manager if state.display_manager != "none" else (state.detected_display_manager if state.detected_display_manager != "none" else "gdm"),
                 )
@@ -1330,94 +1351,82 @@ def step_login(ui: WizardUI, state: WizardState) -> None:
             if selected == "manual":
                 state.autostart_enabled = False
         elif choice == "display_manager":
-            if state.login_method != "display-manager":
-                ui.show_message("Display Manager", "Display Manager selection is only used with display-manager login.")
-            else:
-                selected = ui.ask_radio(
-                    "Select Display Manager",
-                    [(value, label, detail, _display_manager_status_text(value)) for value, label, detail in DISPLAY_MANAGER_CHOICES],
-                    state.display_manager if state.display_manager != "none" else "gdm",
-                )
-                if selected != BACK:
-                    state.display_manager = selected
-                    if state.login_method == "display-manager":
-                        state.autologin = False
+            selected = ui.ask_radio(
+                "Display Manager",
+                [(value, label, detail, _display_manager_status_text(value)) for value, label, detail in DISPLAY_MANAGER_CHOICES],
+                state.display_manager if state.display_manager != "none" else "gdm",
+            )
+            if selected != BACK:
+                state.display_manager = selected
+                if state.login_method == "display-manager":
+                    state.autologin = False
         elif choice == "autologin":
-            if state.login_method != "display-manager" or state.display_manager == "none":
-                ui.show_message("Autologin", "Autologin for display manager mode is only available after selecting a display manager.")
-            else:
-                selected = ui.ask_yes_no("Autologin", "Enable autologin?", state.autologin)
-                if selected != BACK:
-                    state.autologin = selected
+            selected = ui.ask_yes_no("Autologin", "Enable autologin?", state.autologin)
+            if selected != BACK:
+                state.autologin = selected
         elif choice == "tty_device":
-            if state.login_method != "tty-autologin":
-                ui.show_message("TTY Device", "TTY Device is only used for tty-autologin mode.")
-            else:
-                selected = ui.ask_input("TTY Device", "TTY Device:", state.tty_device or "tty1")
-                if selected != BACK:
-                    state.tty_device = selected or "tty1"
+            selected = ui.ask_input("TTY Device", "TTY Device:", state.tty_device or "tty1")
+            if selected != BACK:
+                state.tty_device = selected or "tty1"
         elif choice == "autostart":
-            if state.login_method != "tty-autologin":
-                ui.show_message("Autostart", "Autostart submenu is only available for tty-autologin.")
-            else:
-                selected = ui.ask_radio(
-                    "Autostart Action",
-                    AUTOSTART_ACTION_CHOICES,
-                    state.autostart_action,
+            selected = ui.ask_radio(
+                "Autostart Action",
+                AUTOSTART_ACTION_CHOICES,
+                state.autostart_action,
+            )
+            if selected == BACK:
+                continue
+            state.autostart_action = selected
+            if selected == "skip":
+                state.autostart_enabled = False
+                continue
+            if selected == "off":
+                state.autostart_enabled = False
+                continue
+            state.autostart_enabled = True
+            if state.autostart_enabled:
+                autostart_options = [
+                    (value, label, _desktop_choice_detail(value, label), _session_status_text(value, state, True))
+                    for value, label in DESKTOP_CHOICES
+                ] + [
+                    ("custom", "Custom Command", "Runs a custom command after login instead of a predefined desktop session.", _session_status_text("custom", state, True))
+                ]
+                selected_session = ui.ask_radio(
+                    "Autostart Session",
+                    autostart_options,
+                    state.autostart_session,
                 )
-                if selected == BACK:
+                if selected_session == BACK:
                     continue
-                state.autostart_action = selected
-                if selected == "skip":
-                    state.autostart_enabled = False
-                    continue
-                if selected == "off":
-                    state.autostart_enabled = False
-                    continue
-                state.autostart_enabled = True
-                if state.autostart_enabled:
-                    autostart_options = [
-                        (value, label, _desktop_choice_detail(value, label), _session_status_text(value, state, True))
-                        for value, label in DESKTOP_CHOICES
-                    ] + [
-                        ("custom", "Custom Command", "Runs a custom command after login instead of a predefined desktop session.", _session_status_text("custom", state, True))
-                    ]
-                    selected_session = ui.ask_radio(
-                        "Autostart Session",
-                        autostart_options,
-                        state.autostart_session,
+                state.autostart_session = selected_session
+                if selected_session == "custom":
+                    custom_command = ui.ask_input(
+                        "Custom Autostart Command",
+                        "Command:",
+                        state.autostart_custom_command,
                     )
-                    if selected_session == BACK:
+                    if custom_command != BACK:
+                        state.autostart_custom_command = custom_command
+                else:
+                    if _session_installed(selected_session):
+                        state.autostart_install_missing = False
                         continue
-                    state.autostart_session = selected_session
-                    if selected_session == "custom":
-                        custom_command = ui.ask_input(
-                            "Custom Autostart Command",
-                            "Command:",
-                            state.autostart_custom_command,
+                    install_missing = ui.ask_yes_no(
+                        "Install Missing Session",
+                        "Install the selected session if it is missing?",
+                        state.autostart_install_missing,
+                    )
+                    if install_missing == BACK:
+                        continue
+                    state.autostart_install_missing = install_missing
+                    if install_missing:
+                        selected_profile = ui.ask_radio(
+                            "Session Install Profile",
+                            INSTALL_PROFILE_CHOICES,
+                            state.autostart_install_profile,
                         )
-                        if custom_command != BACK:
-                            state.autostart_custom_command = custom_command
-                    else:
-                        if _session_installed(selected_session):
-                            state.autostart_install_missing = False
-                            continue
-                        install_missing = ui.ask_yes_no(
-                            "Install Missing Session",
-                            "Install the selected session if it is missing?",
-                            state.autostart_install_missing,
-                        )
-                        if install_missing == BACK:
-                            continue
-                        state.autostart_install_missing = install_missing
-                        if install_missing:
-                            selected_profile = ui.ask_radio(
-                                "Session Install Profile",
-                                INSTALL_PROFILE_CHOICES,
-                                state.autostart_install_profile,
-                            )
-                            if selected_profile != BACK:
-                                state.autostart_install_profile = selected_profile
+                        if selected_profile != BACK:
+                            state.autostart_install_profile = selected_profile
 
 
 def step_drivers(ui: WizardUI, state: WizardState) -> None:
@@ -1479,13 +1488,15 @@ def step_drivers(ui: WizardUI, state: WizardState) -> None:
         if choice == "done":
             return
         if choice == "mode":
-            selected = ui.ask_radio("Driver Installation Type", DRIVER_CHOICES, state.driver_mode)
+            selected = ui.ask_radio("Driver Mode", DRIVER_CHOICES, state.driver_mode)
             if selected == BACK:
                 continue
             state.driver_mode = selected
             if selected != "manual":
                 state.driver_groups = []
                 state.driver_packages = []
+                if selected == "auto" and detected_inventory:
+                    pass
             else:
                 _open_manual_driver_categories()
 
@@ -1501,9 +1512,8 @@ def step_boot(ui: WizardUI, state: WizardState) -> None:
             )
         options.extend(
             [
-                ("silent", "Silent Boot", _bool_label(state.boot_silent), "", _boot_bool_detail("Silent Boot", state.boot_silent)),
-                ("os_prober", "OS-Prober", _bool_label(state.boot_os_prober), "Detect Other OS Installs", _boot_bool_detail("OS-Prober", state.boot_os_prober)),
-                ("plymouth", "Plymouth", plymouth_action_label(state.boot_plymouth_action), "", _boot_plymouth_detail(state)),
+                ("splash", "Boot Splash Mode", splash_mode_label(state.boot_splash_mode), "", _boot_splash_detail(state)),
+                ("os_prober", "OS-Prober", os_prober_action_label(state.boot_os_prober_action), "Detect Other OS Installs", _boot_os_prober_detail(state)),
                 ("done", "Done", "", ""),
             ]
         )
@@ -1537,22 +1547,22 @@ def step_boot(ui: WizardUI, state: WizardState) -> None:
                 state.bootloader_choice = selected
                 state.bootloader_action = "replace"
                 state.boot_replace_bootloader = True
-        if choice == "silent":
-            selected = ui.ask_yes_no("Silent Boot", "Enable silent boot flags?", state.boot_silent)
-            if selected != BACK:
-                state.boot_silent = selected
-        elif choice == "os_prober":
-            selected = ui.ask_yes_no("OS-Prober", "Enable OS-Prober?", state.boot_os_prober)
-            if selected != BACK:
-                state.boot_os_prober = selected
-        elif choice == "plymouth":
+        elif choice == "splash":
             selected = ui.ask_radio(
-                "Plymouth Action",
-                PLYMOUTH_CHOICES,
-                state.boot_plymouth_action,
+                "Boot Splash Mode",
+                SPLASH_MODE_CHOICES,
+                state.boot_splash_mode,
             )
             if selected != BACK:
-                state.boot_plymouth_action = selected
+                state.boot_splash_mode = selected
+        elif choice == "os_prober":
+            selected = ui.ask_radio(
+                "OS-Prober Action",
+                OS_PROBER_CHOICES,
+                state.boot_os_prober_action,
+            )
+            if selected != BACK:
+                state.boot_os_prober_action = selected
 def step_summary(ui: WizardUI, state: WizardState) -> bool | str:
     report = build_review_report(state)
     return ui.show_review(
@@ -1595,6 +1605,14 @@ def configure_boot_section(ui: WizardUI, state: WizardState) -> None:
 def configure_finalize_section(ui: WizardUI, state: WizardState) -> str:
     result = step_summary(ui, state)
     if result is True:
+        choice = ui.ask_yes_no(
+            "State Retention",
+            "Keep this configuration state saved on disk for future runs?",
+            default=state.save_profile
+        )
+        if choice == BACK:
+            return "back"
+        state.save_profile = choice
         return "apply"
     if result in {False, BACK}:
         return "back"

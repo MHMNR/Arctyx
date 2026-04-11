@@ -530,11 +530,16 @@ startup_wait_for_network() {
   while ! startup_has_network; do
     startup_choose_option \
       "Network Required" \
-      "Please connect to the internet and retry." \
+      "Please connect to the internet and retry, or continue offline when the next step does not require downloads." \
       "Retry|Check the connection again and continue setup" \
+      "Continue Offline|Proceed without internet; package download steps may still fail later" \
       "Exit|Close ARCTYX until internet is available"
-    case "$STARTUP_MENU_SELECTION" in
+    case "${STARTUP_MENU_SELECTION:-2}" in
       0) ;;
+      1)
+        [[ "$pushed" == "yes" ]] && ui_pop
+        return 2
+        ;;
       *)
         [[ "$pushed" == "yes" ]] && ui_pop
         return 1
@@ -566,7 +571,7 @@ startup_confirm_dependency_install() {
     "ARCTYX needs a few required packages before the installer can start." \
     "Install|Install missing packages automatically: $missing_text" \
     "Exit|Close ARCTYX without installing the required packages"
-  case "$STARTUP_MENU_SELECTION" in
+  case "${STARTUP_MENU_SELECTION:-1}" in
     0)
       [[ "$pushed" == "yes" ]] && ui_pop
       return 0
@@ -621,7 +626,8 @@ startup_install_missing_dependencies() {
   : > "$log_file"
 
   (
-    pacman -Sy --needed --noconfirm "${missing[@]}"
+    pacman -Syy --noconfirm &&
+    pacman -S --needed --noconfirm "${missing[@]}"
   ) >"$log_file" 2>&1 &
   spinner_pid=$!
 
@@ -669,12 +675,24 @@ startup_install_missing_dependencies() {
 
 startup_prepare_runtime() {
   local missing_text
+  local network_rc
   local -a missing=()
 
-  startup_wait_for_network || exit 1
+  startup_wait_for_network
+  network_rc=$?
+  case "$network_rc" in
+    0) ;;
+    1) exit 1 ;;
+    2) warn "Continuing without network. Any missing dependency or package download step may still fail later." ;;
+  esac
 
   missing_text="$(startup_collect_missing_dependencies)"
   if [[ -n "$missing_text" ]]; then
+    if [[ "$network_rc" -eq 2 ]]; then
+      err "Required runtime dependencies are missing, but setup is continuing offline: $missing_text"
+      err "Connect to the internet or install them manually, then retry."
+      exit 1
+    fi
     startup_confirm_dependency_install "$missing_text" || exit 1
     read -r -a missing <<<"$missing_text"
     startup_install_missing_dependencies "${missing[@]}" || {
@@ -1150,9 +1168,22 @@ refresh_user_context() {
   TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6 || true)"
   TARGET_SHELL="$(getent passwd "$TARGET_USER" | cut -d: -f7 || true)"
 
-  if [[ -z "$TARGET_HOME" || ! -d "$TARGET_HOME" ]]; then
-    err "Unable to resolve valid home for user: $TARGET_USER"
-    exit 1
+  if [[ -z "$TARGET_HOME" ]]; then
+    if [[ "$TARGET_USER" == "root" ]]; then
+      TARGET_HOME="/root"
+      TARGET_SHELL="${TARGET_SHELL:-/bin/bash}"
+      warn "Could not resolve home via getent for root. Using /root as fallback."
+    else
+      err "Unable to resolve valid home for user: $TARGET_USER"
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$TARGET_HOME" ]]; then
+    warn "Home directory $TARGET_HOME does not exist. Creating it."
+    mkdir -p "$TARGET_HOME" || {
+      err "Failed to create home directory: $TARGET_HOME"
+      exit 1
+    }
   fi
   if [[ -z "$TARGET_SHELL" ]]; then
     TARGET_SHELL="/bin/bash"
@@ -1166,6 +1197,8 @@ refresh_user_context() {
     bash) SHELL_RC_FILE="$TARGET_HOME/.bash_profile" ;;
     *) SHELL_RC_FILE="$TARGET_HOME/.profile" ;;
   esac
+
+  detect_environment || true
 }
 
 ensure_pacman_db_ready() {
@@ -1173,8 +1206,8 @@ ensure_pacman_db_ready() {
   if compgen -G "${sync_dir}/*.db" >/dev/null 2>&1; then
     return 0
   fi
-  warn "Pacman sync database not found. Running pacman -Sy once before install."
-  pacman -Sy --noconfirm || {
+  warn "Pacman sync database not found. Refreshing pacman databases safely before install."
+  pacman -Syy --noconfirm || {
     err "Failed to initialize pacman sync database."
     return 1
   }
@@ -1421,7 +1454,7 @@ category_packages() {
     dev-toolchain) echo "gcc make cmake meson ninja pkgconf python python-pip nodejs npm go rustup" ;;
     shells) echo "bash-completion zsh-completions zsh-autosuggestions zsh-syntax-highlighting" ;;
     cli-utils) echo "ripgrep fd fzf bat eza tree jq yq htop btop ncdu tmux neovim nano fastfetch" ;;
-    networking) echo "networkmanager network-manager-applet dnsutils inetutils nmap traceroute" ;;
+    networking) echo "networkmanager network-manager-applet bind-tools inetutils nmap traceroute" ;;
     desktop-common) echo "xdg-utils gvfs gvfs-mtp gvfs-smb gvfs-afc gvfs-gphoto2 gvfs-nfs file-roller p7zip unarchiver" ;;
     media) echo "ffmpeg imagemagick ffmpegthumbnailer" ;;
     fonts) echo "ttf-dejavu noto-fonts noto-fonts-emoji" ;;
@@ -1435,49 +1468,134 @@ de_packages() {
   local session="${1:-none}"
   local profile="${2:-core}"
   case "$session:$profile" in
-    hyprland:core) echo "hyprland xdg-desktop-portal-hyprland" ;;
-    hyprland:full) echo "hyprland xdg-desktop-portal-hyprland waybar wofi kitty sddm" ;;
-    sway:core) echo "sway xdg-desktop-portal-wlr" ;;
-    sway:full) echo "sway xdg-desktop-portal-wlr waybar wofi foot sddm" ;;
-    river:core) echo "river xdg-desktop-portal-wlr" ;;
-    river:full) echo "river xdg-desktop-portal-wlr waybar wofi foot sddm" ;;
-    wayfire:core) echo "wayfire xdg-desktop-portal-wlr" ;;
-    wayfire:full) echo "wayfire wayfire-plugins-extra xdg-desktop-portal-wlr wf-shell wcm foot sddm" ;;
-    labwc:core) echo "labwc xdg-desktop-portal-wlr" ;;
-    labwc:full) echo "labwc xdg-desktop-portal-wlr waybar wofi foot sddm" ;;
-    niri:core) echo "niri xdg-desktop-portal-gnome" ;;
-    niri:full) echo "niri xdg-desktop-portal-gnome waybar fuzzel foot sddm" ;;
-    plasma:core) echo "plasma-desktop" ;;
-    plasma:full) echo "plasma-meta konsole dolphin sddm" ;;
-    gnome:core) echo "gnome-shell gnome-session" ;;
+    # ── Hyprland ──────────────────────────────────────────────────────────────
+    # Wiki: hyprland, xdg-desktop-portal-hyprland, polkit MANDATORY, xdg-desktop-portal-gtk for fallback
+    # hyprpolkitagent = native Wayland polkit agent; mako = notification daemon
+    hyprland:core) echo "hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland qt6-wayland egl-wayland polkit" ;;
+    hyprland:full) echo "hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland qt6-wayland egl-wayland polkit hyprpolkitagent mako waybar wofi kitty sddm" ;;
+
+    # ── Sway ──────────────────────────────────────────────────────────────────
+    # Wiki: sway + polkit + swaylock/swayidle/swaybg (explicitly recommended)
+    # mako = notification daemon; foot = default terminal per wiki
+    sway:core) echo "sway xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    sway:full) echo "sway xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit swaylock swayidle swaybg mako waybar wofi foot sddm" ;;
+
+    # ── River ─────────────────────────────────────────────────────────────────
+    # Wiki: very minimal — just river; polkit needed for privilege actions
+    river:core) echo "river xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    river:full) echo "river xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit waybar wofi foot sddm" ;;
+
+    # ── Wayfire ───────────────────────────────────────────────────────────────
+    # No dedicated wiki page; polkit needed; wf-shell = Wayfire panel; wcm = config manager
+    wayfire:core) echo "wayfire xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    wayfire:full) echo "wayfire wayfire-plugins-extra xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit wf-shell wcm foot sddm" ;;
+
+    # ── Labwc ─────────────────────────────────────────────────────────────────
+    # wlroots-based; polkit needed
+    labwc:core) echo "labwc xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    labwc:full) echo "labwc xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit waybar wofi foot sddm" ;;
+
+    # ── Niri ──────────────────────────────────────────────────────────────────
+    # Wiki: niri + fuzzel (default launcher), mako (notifications), waybar,
+    #       xdg-desktop-portal-gtk + xdg-desktop-portal-gnome (screen sharing),
+    #       xwayland-satellite (NOT plain xwayland — niri-specific XWayland compat),
+    #       swayidle + swaylock (idle/lock), swaybg (wallpaper)
+    niri:core) echo "niri xdg-desktop-portal-gnome xdg-desktop-portal-gtk xwayland-satellite qt6-wayland polkit" ;;
+    niri:full) echo "niri xdg-desktop-portal-gnome xdg-desktop-portal-gtk xwayland-satellite qt6-wayland polkit mako swaybg swayidle swaylock waybar fuzzel foot sddm" ;;
+
+    # ── Plasma (KDE) ──────────────────────────────────────────────────────────
+    # Wiki: plasma-desktop (minimal) or plasma-meta (full)
+    # Core needs: plasma-pa (volume), kscreen (display), powerdevil (power),
+    #             plasma-nm + NetworkManager (network applet), bluedevil (BT)
+    # Full needs: sddm + sddm-kcm (DM config), kde-gtk-config + breeze-gtk (GTK theming)
+    plasma:core) echo "plasma-desktop plasma-pa kscreen powerdevil plasma-nm bluedevil" ;;
+    plasma:full) echo "plasma-meta sddm sddm-kcm kde-gtk-config breeze-gtk konsole dolphin" ;;
+
+    # ── GNOME ─────────────────────────────────────────────────────────────────
+    # Wiki: gnome-shell (minimal) or gnome (full group)
+    # Core needs: gnome-control-center (settings), nautilus (file manager),
+    #             xdg-desktop-portal-gnome (screen capture/share)
+    # Full: use 'gnome' group which includes everything + gdm
+    gnome:core) echo "gnome-shell gnome-session gnome-control-center nautilus xdg-desktop-portal-gnome" ;;
     gnome:full) echo "gnome gdm" ;;
-    xfce:core) echo "xfce4 xfce4-session" ;;
-    xfce:full) echo "xfce4 xfce4-goodies lightdm lightdm-gtk-greeter" ;;
-    cinnamon:core) echo "cinnamon" ;;
-    cinnamon:full) echo "cinnamon nemo lightdm lightdm-gtk-greeter" ;;
-    mate:core) echo "mate" ;;
-    mate:full) echo "mate mate-extra lightdm lightdm-gtk-greeter" ;;
-    lxqt:core) echo "lxqt" ;;
-    lxqt:full) echo "lxqt sddm" ;;
-    budgie:core) echo "budgie-desktop" ;;
-    budgie:full) echo "budgie-desktop gdm" ;;
+
+    # ── XFCE ──────────────────────────────────────────────────────────────────
+    # Wiki: xfce4 (group, already includes xfce4-session) + xfce4-goodies (extras)
+    # Core needs: gvfs (USB/network drive auto-mount), polkit-gnome (privilege agent),
+    #             tumbler (thumbnail generation for Thunar)
+    xfce:core) echo "xfce4 gvfs polkit-gnome tumbler" ;;
+    xfce:full) echo "xfce4 xfce4-goodies gvfs polkit-gnome tumbler network-manager-applet lightdm lightdm-gtk-greeter" ;;
+
+    # ── Cinnamon ──────────────────────────────────────────────────────────────
+    # Wiki: cinnamon (group). gnome-keyring needed for keyring/secrets.
+    # polkit-gnome for privilege elevation; network-manager-applet for tray
+    cinnamon:core) echo "cinnamon gnome-keyring" ;;
+    cinnamon:full) echo "cinnamon gnome-keyring network-manager-applet lightdm lightdm-gtk-greeter" ;;
+
+    # ── MATE ──────────────────────────────────────────────────────────────────
+    # Wiki: mate (group) + mate-extra. mate-polkit is in mate-extra but
+    # should be in core so privilege works out-of-the-box.
+    # network-manager-applet for NM tray icon
+    mate:core) echo "mate mate-polkit" ;;
+    mate:full) echo "mate mate-extra mate-polkit network-manager-applet lightdm lightdm-gtk-greeter" ;;
+
+    # ── LXQt ──────────────────────────────────────────────────────────────────
+    # Wiki: lxqt (group) + breeze-icons (REQUIRED — without icons LXQt is broken)
+    # openbox is the default WM bundled with LXQt
+    # network-manager-applet for connectivity tray
+    lxqt:core) echo "lxqt openbox breeze-icons" ;;
+    lxqt:full) echo "lxqt openbox breeze-icons sddm network-manager-applet" ;;
+
+    # ── Budgie ────────────────────────────────────────────────────────────────
+    # Wiki: budgie-desktop + budgie-control-center (modern Budgie settings panel)
+    # gdm is the recommended DM; network-manager-applet for tray
+    budgie:core) echo "budgie-desktop budgie-control-center" ;;
+    budgie:full) echo "budgie-desktop budgie-control-center network-manager-applet gdm" ;;
+
+    # ── Deepin ────────────────────────────────────────────────────────────────
+    # Wiki: deepin (group) + deepin-extra; lightdm REQUIRED as DM;
+    # lightdm-deepin-greeter is the official Deepin greeter (NOT lightdm-gtk-greeter)
     deepin:core) echo "deepin" ;;
-    deepin:full) echo "deepin deepin-extra lightdm lightdm-gtk-greeter" ;;
+    deepin:full) echo "deepin deepin-extra lightdm lightdm-deepin-greeter" ;;
+
+    # ── Pantheon ──────────────────────────────────────────────────────────────
+    # Not on Arch Wiki (Elementary OS DE); kept as best-effort
     pantheon:core) echo "pantheon-session gala wingpanel" ;;
     pantheon:full) echo "pantheon-session gala wingpanel lightdm lightdm-pantheon-greeter" ;;
-    i3:core) echo "i3-wm i3status i3lock dmenu" ;;
-    i3:full) echo "i3-wm i3status i3lock dmenu picom feh rofi lightdm lightdm-gtk-greeter" ;;
-    bspwm:core) echo "bspwm sxhkd" ;;
-    bspwm:full) echo "bspwm sxhkd polybar rofi picom lightdm lightdm-gtk-greeter" ;;
-    awesome:core) echo "awesome" ;;
-    awesome:full) echo "awesome rofi picom lightdm lightdm-gtk-greeter" ;;
-    openbox:core) echo "openbox obconf tint2" ;;
-    openbox:full) echo "openbox obconf tint2 rofi picom lightdm lightdm-gtk-greeter" ;;
+
+    # ── i3 ────────────────────────────────────────────────────────────────────
+    # Wiki: i3-wm, i3status, i3lock, dmenu. polkit explicitly required.
+    # dunst = notification daemon (needed for any notif to appear)
+    # xterm = default terminal referenced in i3 config (without it →bar/exec fail)
+    i3:core) echo "i3-wm i3status i3lock dmenu polkit dunst xterm xorg-server xorg-xinit" ;;
+    i3:full) echo "i3-wm i3status i3lock dmenu polkit dunst xterm picom feh rofi xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+
+    # ── bspwm ─────────────────────────────────────────────────────────────────
+    # Wiki: bspwm + sxhkd. Default sxhkdrc uses xterm as terminal.
+    # polkit + dunst needed for privilege and notifications
+    bspwm:core) echo "bspwm sxhkd xterm xorg-server xorg-xinit" ;;
+    bspwm:full) echo "bspwm sxhkd xterm polkit dunst polybar rofi picom xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+
+    # ── Awesome ───────────────────────────────────────────────────────────────
+    # Wiki: awesome. Default rc.lua uses xterm as terminal.
+    # polkit + dunst needed for privilege and notifications
+    awesome:core) echo "awesome xterm xorg-server xorg-xinit" ;;
+    awesome:full) echo "awesome xterm polkit dunst rofi picom xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+
+    # ── Openbox ───────────────────────────────────────────────────────────────
+    # Wiki: openbox + obconf-qt (Qt config manager, wiki recommends Qt version),
+    #       polkit-gnome (explicitly mentioned), python-pyxdg (XDG autostart),
+    #       tint2 (taskbar), xterm (default terminal), network-manager-applet,
+    #       dunst (notifications)
+    openbox:core) echo "openbox obconf-qt tint2 python-pyxdg polkit-gnome xterm xorg-server xorg-xinit" ;;
+    openbox:full) echo "openbox obconf-qt tint2 python-pyxdg polkit-gnome xterm dunst rofi picom network-manager-applet xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+
     custom:*) echo "$ARCH_CUSTOM_DE_PKGS" ;;
-    none:*) echo "" ;;
-    *) echo "" ;;
+    none:*)   echo "" ;;
+    *)        echo "" ;;
   esac
 }
+
 
 session_label() {
   case "$1" in
@@ -1519,6 +1637,7 @@ ide_to_pkg() {
     code) echo "pacman|code" ;;
     codium) echo "aur|vscodium-bin" ;;
     cursor) echo "aur|cursor-bin" ;;
+    antigravity) echo "aur|antigravity" ;;
     zed) echo "pacman|zed" ;;
     neovim) echo "pacman|neovim" ;;
     emacs) echo "pacman|emacs" ;;
@@ -1561,7 +1680,7 @@ app_to_pkg() {
     inkscape) echo "pacman|inkscape" ;;
     darktable) echo "pacman|darktable" ;;
     kdenlive) echo "pacman|kdenlive" ;;
-    shotcut) echo "aur|shotcut-bin" ;;
+    shotcut) echo "pacman|shotcut" ;;
     davinci-resolve) echo "aur|davinci-resolve" ;;
     obs-studio) echo "pacman|obs-studio" ;;
     blender) echo "pacman|blender" ;;
@@ -1618,10 +1737,13 @@ app_to_pkg() {
     okular) echo "pacman|okular" ;;
     evince) echo "pacman|evince" ;;
     joplin) echo "aur|joplin-desktop" ;;
-    zathura) echo "pacman|zathura" ;;
+    zathura) echo "pacman|zathura zathura-pdf-mupdf" ;;
     calibre) echo "pacman|calibre" ;;
     foliate) echo "pacman|foliate" ;;
     papers) echo "pacman|papers" ;;
+    android-studio) echo "aur|android-studio" ;;
+    virtualbox) echo "pacman|virtualbox virtualbox-host-dkms" ;;
+    virt-manager) echo "pacman|virt-manager qemu-full libvirt dnsmasq iptables-nft vde2 ubridge" ;;
     *) echo "" ;;
   esac
 }
@@ -1647,7 +1769,8 @@ file_manager_support_packages() {
 optimize_pacman_mirrors_if_selected() {
   [[ "$ARCH_OPTIMIZE_MIRRORS" == "yes" ]] || return 0
   log "Optimizing pacman mirrors with reflector"
-  pacman -S --needed --noconfirm reflector
+  pacman -S --needed --noconfirm reflector \
+    || warn "reflector install failed, mirror optimization skipped"
   reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || warn "Reflector run failed; keeping current mirrorlist."
   pacman -Syy || warn "pacman -Syy failed after reflector."
 }
@@ -1737,7 +1860,8 @@ enable_chaotic_aur_if_selected() {
   fi
 
   log "Enabling Chaotic AUR repository"
-  pacman -S --needed --noconfirm gnupg archlinux-keyring curl
+  pacman -S --needed --noconfirm gnupg archlinux-keyring curl \
+    || { err "Failed to install keyring dependencies."; return 1; }
   pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
   pacman-key --lsign-key 3056513887B78AEB
   pacman -U --noconfirm \
@@ -1914,11 +2038,21 @@ install_aur_helper() {
   local repo_url="https://aur.archlinux.org/${helper}.git"
 
   log "Installing AUR helper: $helper (missing but required)"
-  pacman -S --needed --noconfirm base-devel git
+  pacman -S --needed --noconfirm base-devel git \
+    || { err "base-devel/git install failed. Cannot build AUR helper."; return 1; }
   if pacman -Si "$helper" >/dev/null 2>&1; then
     log "Installing AUR helper from pacman repository: $helper"
     pacman -S --needed --noconfirm "$helper"
     return 0
+  fi
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    if ! command -v setpriv >/dev/null 2>&1 && ! command -v runuser >/dev/null 2>&1; then
+      if ! command -v sudo >/dev/null 2>&1 || ! sudo -n -u "$TARGET_USER" true 2>/dev/null; then
+        err "Cannot switch to $TARGET_USER for AUR build (no setpriv/runuser, and sudo would require a password)."
+        err "Install $helper manually as $TARGET_USER, then re-run."
+        return 1
+      fi
+    fi
   fi
   install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" "$build_root"
   run_as_target_user "rm -rf '$build_root/$helper' && git clone '$repo_url' '$build_root/$helper' && cd '$build_root/$helper' && makepkg -si --noconfirm"
@@ -1937,7 +2071,8 @@ install_arch_base_if_selected() {
     # shellcheck disable=SC2206
     pac_missing_pkgs=($ARCH_PACMAN_PKGS_MISSING)
     log "Installing missing pacman packages from Arch base module"
-    pacman -S --needed --noconfirm "${pac_missing_pkgs[@]}"
+    pacman -S --needed --noconfirm "${pac_missing_pkgs[@]}" \
+      || { err "Base package installation failed: ${pac_missing_pkgs[*]}"; return 1; }
   else
     log "Arch base pacman packages already installed."
   fi
@@ -1972,7 +2107,11 @@ install_arch_base_if_selected() {
 
     command -v "$helper" >/dev/null 2>&1 || install_aur_helper "$helper"
     log "Installing missing AUR packages with $helper"
-    run_as_target_user_argv "$helper" -S --noconfirm --needed "${aur_missing_pkgs[@]}"
+    # BUG #29: Add non-interactive flags to suppress yay/paru prompts (cleanBuild, diffs)
+    local -a _nointeract_flags=()
+    # shellcheck disable=SC2207
+    _nointeract_flags=($(aur_helper_nointeract_flags "$helper"))
+    run_as_target_user_argv "$helper" -S --noconfirm --needed "${_nointeract_flags[@]+${_nointeract_flags[@]}}" "${aur_missing_pkgs[@]}"
   fi
 }
 
@@ -2077,6 +2216,27 @@ dedupe_word_list() {
   echo "$out" | xargs
 }
 
+nvidia_is_legacy_family() {
+  local gpu_lines="${1:-}"
+  [[ -n "$gpu_lines" ]] || return 1
+  echo "$gpu_lines" | grep -qiE 'GTX 10|GT 10|P10[0-9]{2}|Titan Xp|Titan X[^0-9]|Quadro P[0-9]|Tesla P[0-9]|MX150|MX250|GTX 9|GT 9|Quadro M[0-9]|Tesla M[0-9]|Maxwell|Pascal'
+}
+
+selected_sessions_include_wayland() {
+  local session
+  for session in ${DEWM_SELECTED:-}; do
+    case "$session" in
+      hyprland|sway|river|wayfire|labwc|niri|plasma|gnome) return 0 ;;
+    esac
+  done
+  if [[ "$LOGIN_METHOD" == "tty-autologin" ]]; then
+    case "${SESSION_CHOICE:-}" in
+      hyprland|sway|river|wayfire|labwc|niri|plasma|gnome) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
 detect_installed_kernel_header_pkgs() {
   local pkgs=()
   command -v pacman >/dev/null 2>&1 || return 0
@@ -2154,22 +2314,31 @@ driver_collect_detection() {
   fi
 
   if echo "$gpu_lines" | grep -qi 'NVIDIA'; then
-    DRIVER_GPU_RECO_PKGS+=" nvidia-open-dkms nvidia-utils nvidia-settings ${kernel_header_pkgs}"
-    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-nvidia-utils"
-    DRIVER_GPU_MENU_PKGS+=" nvidia-open-dkms nvidia-open nvidia-dkms nvidia nvidia-utils nvidia-settings ${kernel_header_pkgs}"
+    if nvidia_is_legacy_family "$gpu_lines"; then
+      DRIVER_GPU_RECO_PKGS+=" nvidia-utils nvidia-settings ${kernel_header_pkgs}"
+      DRIVER_SELECTED_PKGS_AUR="$(dedupe_word_list "${DRIVER_SELECTED_PKGS_AUR:-} nvidia-580xx-dkms")"
+      [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-nvidia-utils"
+    else
+      DRIVER_GPU_RECO_PKGS+=" nvidia-open-dkms nvidia-utils nvidia-settings ${kernel_header_pkgs}"
+      [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-nvidia-utils"
+    fi
+    if selected_sessions_include_wayland; then
+      DRIVER_GPU_RECO_PKGS+=" egl-wayland"
+    fi
+    DRIVER_GPU_MENU_PKGS+=" nvidia-580xx-dkms nvidia-open-dkms nvidia-open nvidia-dkms nvidia nvidia-utils nvidia-settings egl-wayland ${kernel_header_pkgs}"
     [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_MENU_PKGS+=" lib32-nvidia-utils"
   fi
   if echo "$gpu_lines" | grep -qiE 'AMD|Advanced Micro Devices|Radeon'; then
-    DRIVER_GPU_RECO_PKGS+=" mesa vulkan-radeon xf86-video-amdgpu"
-    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-vulkan-radeon"
-    DRIVER_GPU_MENU_PKGS+=" mesa vulkan-radeon xf86-video-amdgpu"
-    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_MENU_PKGS+=" lib32-vulkan-radeon"
+    DRIVER_GPU_RECO_PKGS+=" mesa vulkan-radeon libva-mesa-driver"
+    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-mesa lib32-vulkan-radeon lib32-libva-mesa-driver"
+    DRIVER_GPU_MENU_PKGS+=" mesa vulkan-radeon libva-mesa-driver xf86-video-amdgpu"
+    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_MENU_PKGS+=" lib32-mesa lib32-vulkan-radeon lib32-libva-mesa-driver"
   fi
   if echo "$gpu_lines" | grep -qiE 'Intel'; then
     DRIVER_GPU_RECO_PKGS+=" mesa vulkan-intel intel-media-driver"
-    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-vulkan-intel"
+    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_RECO_PKGS+=" lib32-mesa lib32-vulkan-intel"
     DRIVER_GPU_MENU_PKGS+=" mesa vulkan-intel intel-media-driver"
-    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_MENU_PKGS+=" lib32-vulkan-intel"
+    [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && DRIVER_GPU_MENU_PKGS+=" lib32-mesa lib32-vulkan-intel"
   fi
   if [[ "$cpu_vendor" == "GenuineIntel" ]]; then
     DRIVER_CHIPSET_RECO_PKGS+=" intel-ucode"
@@ -2211,6 +2380,34 @@ driver_collect_detection() {
   DRIVER_OTHERS_MENU_PKGS="$(dedupe_word_list "$DRIVER_OTHERS_MENU_PKGS")"
 }
 
+# Returns 0 if any installed package already provides NVIDIA-MODULE
+# (e.g. linux-cachyos-lts-nvidia-open, linux-xanmod-nvidia-open, etc.)
+nvidia_module_already_provided() {
+  local pkg
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    # Match by package name pattern — kernel-bundled NVIDIA packages
+    if echo "$pkg" | grep -qE 'linux-.*(nvidia|nvidia-open)$'; then
+      return 0
+    fi
+    # Match by explicit pacman Provides field
+    if pacman -Qi "$pkg" 2>/dev/null | grep -qE 'Provides.*NVIDIA-MODULE|NVIDIA-MODULE'; then
+      return 0
+    fi
+  done < <(pacman -Qq 2>/dev/null | grep -E '^linux-' || true)
+  return 1
+}
+
+# Returns non-interactive flags for the given AUR helper to suppress all interactive prompts
+aur_helper_nointeract_flags() {
+  local helper="$1"
+  case "$helper" in
+    yay)  printf -- '--answerdiff=None --answeredit=None --cleanafter' ;;
+    paru) printf -- '--skipreview' ;;
+    *)    printf -- '' ;;
+  esac
+}
+
 install_driver_configuration_if_selected() {
   [[ "$DRIVER_CONFIG_MODE" != "skip" ]] || return 0
 
@@ -2224,10 +2421,31 @@ install_driver_configuration_if_selected() {
 
   if [[ -n "$DRIVER_SELECTED_PKGS_PACMAN" ]]; then
     local -a driver_pac_pkgs=()
+    local -a final_pac_pkgs=()
+    local resolved
     # shellcheck disable=SC2206
     driver_pac_pkgs=($DRIVER_SELECTED_PKGS_PACMAN)
-    log "Installing selected driver packages (pacman)"
-    pacman -S --needed --noconfirm "${driver_pac_pkgs[@]}"
+
+    # BUG #28: Filter out nvidia module packages if the kernel already provides NVIDIA-MODULE
+    for pkg in "${driver_pac_pkgs[@]}"; do
+      case "$pkg" in
+        nvidia-open-dkms|nvidia-open|nvidia-dkms|nvidia)
+          if nvidia_module_already_provided 2>/dev/null; then
+            log "Kernel already provides NVIDIA-MODULE. Skipping $pkg installation."
+            log "Ensure nvidia-utils and nvidia-settings are installed for userspace tools."
+            continue
+          fi
+          ;;
+      esac
+      final_pac_pkgs+=("$pkg")
+    done
+
+    if (( ${#final_pac_pkgs[@]} > 0 )); then
+      log "Installing selected driver packages (pacman)"
+      pacman -S --needed --noconfirm "${final_pac_pkgs[@]}"
+    else
+      log "All selected pacman driver packages resolved as already provided by the system."
+    fi
   else
     warn "Driver configuration selected, but no pacman driver package queued."
   fi
@@ -2250,7 +2468,11 @@ install_driver_configuration_if_selected() {
     fi
     if [[ -n "$helper" && "$helper" != "skip" ]]; then
       command -v "$helper" >/dev/null 2>&1 || install_aur_helper "$helper"
-      run_as_target_user_argv "$helper" -S --noconfirm --needed "${driver_aur_pkgs[@]}"
+      # BUG #29: Add non-interactive flags so yay/paru don't prompt for diffs/cleanBuild
+      local -a nointeract_flags=()
+      # shellcheck disable=SC2207
+      nointeract_flags=($(aur_helper_nointeract_flags "$helper"))
+      run_as_target_user_argv "$helper" -S --noconfirm --needed "${nointeract_flags[@]+${nointeract_flags[@]}}" "${driver_aur_pkgs[@]}"
     else
       warn "AUR driver packages selected but no AUR helper available: $DRIVER_SELECTED_PKGS_AUR"
     fi
@@ -2265,8 +2487,11 @@ install_driver_configuration_if_selected() {
      list_has "${DRIVER_SELECTED_PKGS_PACMAN:-}" "nvidia-dkms" || \
      list_has "${DRIVER_SELECTED_PKGS_PACMAN:-}" "nvidia-open" || \
      list_has "${DRIVER_SELECTED_PKGS_PACMAN:-}" "nvidia-open-dkms"; then
-    command -v modprobe >/dev/null 2>&1 && modprobe nvidia nvidia_modeset nvidia_uvm nvidia_drm 2>/dev/null || \
-      warn "NVIDIA kernel modules could not be loaded immediately. A reboot may still be required."
+    # Only attempt module load if a kernel-bundled NVIDIA is NOT already providing the module
+    if ! nvidia_module_already_provided 2>/dev/null; then
+      command -v modprobe >/dev/null 2>&1 && modprobe nvidia nvidia_modeset nvidia_uvm nvidia_drm 2>/dev/null || \
+        warn "NVIDIA kernel modules could not be loaded immediately. A reboot may still be required."
+    fi
   fi
 }
 
@@ -2469,8 +2694,13 @@ remove_autostart_block() {
 inject_autostart_block() {
   local cmd="$1"
   local auth_agent_cmd="${2:-}"
+  local cmd_q auth_agent_q auth_agent_base auth_agent_base_q
   local shell_base
   shell_base="$(basename "$TARGET_SHELL")"
+  printf -v cmd_q '%q' "$cmd"
+  printf -v auth_agent_q '%q' "$auth_agent_cmd"
+  auth_agent_base="$(basename "$auth_agent_cmd")"
+  printf -v auth_agent_base_q '%q' "$auth_agent_base"
 
   install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" "$(dirname "$SHELL_RC_FILE")"
   [[ -f "$SHELL_RC_FILE" ]] || install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" /dev/null "$SHELL_RC_FILE"
@@ -2484,14 +2714,14 @@ inject_autostart_block() {
 if test (tty) = "/dev/${TTY_DEVICE}"; and test -z "\$DISPLAY"; and test -z "\$WAYLAND_DISPLAY"
     if test -n "${auth_agent_cmd}"; and test -x "${auth_agent_cmd}"
         if command -sq pgrep
-            if not pgrep -u (id -u) -f (basename "${auth_agent_cmd}") >/dev/null 2>&1
-                ${auth_agent_cmd} >/dev/null 2>&1 &
+            if not pgrep -u (id -u) -f -- ${auth_agent_base_q} >/dev/null 2>&1
+                /bin/sh -lc ${auth_agent_q} >/dev/null 2>&1 &
             end
         else
-            ${auth_agent_cmd} >/dev/null 2>&1 &
+            /bin/sh -lc ${auth_agent_q} >/dev/null 2>&1 &
         end
     end
-    exec ${cmd}
+    exec /bin/sh -lc ${cmd_q}
 end
 EOT
     else
@@ -2500,13 +2730,13 @@ if [ "\$(tty)" = "/dev/${TTY_DEVICE}" ] && [ -z "\$DISPLAY" ] && [ -z "\$WAYLAND
   if [ -n "${auth_agent_cmd}" ] && [ -x "${auth_agent_cmd}" ]; then
     if command -v pgrep >/dev/null 2>&1; then
       if ! pgrep -u "\$(id -u)" -f "$(basename "${auth_agent_cmd}")" >/dev/null 2>&1; then
-        ${auth_agent_cmd} >/dev/null 2>&1 &
+        /bin/sh -lc ${auth_agent_q} >/dev/null 2>&1 &
       fi
     else
-      ${auth_agent_cmd} >/dev/null 2>&1 &
+      /bin/sh -lc ${auth_agent_q} >/dev/null 2>&1 &
     fi
   fi
-  exec ${cmd}
+  exec /bin/sh -lc ${cmd_q}
 fi
 EOT
     fi
@@ -2527,7 +2757,116 @@ EOT
 
   systemctl daemon-reload
   systemctl enable "getty@${TTY_DEVICE}.service"
-  loginctl enable-linger "$TARGET_USER"
+  # BUG #42: root is always active-linger; enable-linger is meaningless and harmless but skip it
+  if [[ "$TARGET_USER" != "root" ]]; then
+    loginctl enable-linger "$TARGET_USER" || true
+  fi
+}
+
+post_install_networkmanager() {
+  if pacman -Q networkmanager >/dev/null 2>&1; then
+    systemctl enable NetworkManager.service || warn "Failed to enable NetworkManager.service"
+  fi
+}
+
+post_install_docker() {
+  if pacman -Q docker >/dev/null 2>&1; then
+    systemctl enable docker.service || warn "Failed to enable docker.service"
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+      usermod -aG docker "$TARGET_USER" || warn "Failed to add $TARGET_USER to docker group"
+      warn "Docker group updated for $TARGET_USER. Log out and back in before using docker without sudo."
+    fi
+  fi
+}
+
+post_install_bluetooth() {
+  if pacman -Q bluez >/dev/null 2>&1; then
+    systemctl enable bluetooth.service || warn "Failed to enable bluetooth.service"
+  fi
+}
+
+post_install_virt_manager() {
+  if pacman -Q libvirt >/dev/null 2>&1; then
+    systemctl enable libvirtd.service || warn "Failed to enable libvirtd.service"
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+      usermod -aG libvirt,kvm "$TARGET_USER" \
+        || warn "Failed to add $TARGET_USER to libvirt/kvm groups"
+      warn "libvirt/kvm group updated for $TARGET_USER. Log out and back in before using virt-manager."
+    fi
+  fi
+}
+
+post_install_virtualbox() {
+  if pacman -Q virtualbox >/dev/null 2>&1; then
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+      usermod -aG vboxusers "$TARGET_USER" \
+        || warn "Failed to add $TARGET_USER to vboxusers group"
+      warn "vboxusers group updated for $TARGET_USER. Log out and back in before using VirtualBox."
+    fi
+    modprobe vboxdrv 2>/dev/null || true
+  fi
+}
+
+post_install_rustup_default_toolchain() {
+  if list_has "${ARCH_SELECTED_CATEGORIES:-}" "dev-toolchain" && pacman -Q rustup >/dev/null 2>&1; then
+    run_as_target_user_argv rustup default stable || warn "rustup default stable failed"
+  fi
+}
+
+post_install_storage_maintenance() {
+  if command -v pacman >/dev/null 2>&1; then
+    pacman -S --needed --noconfirm pacman-contrib || warn "Failed to install pacman-contrib for paccache maintenance"
+    if pacman -Q pacman-contrib >/dev/null 2>&1; then
+      systemctl enable paccache.timer || warn "Failed to enable paccache.timer"
+    fi
+  fi
+
+  if command -v lsblk >/dev/null 2>&1 && lsblk -ndo DISC-MAX 2>/dev/null | grep -qvE '^(0B|0)$'; then
+    systemctl enable fstrim.timer || warn "Failed to enable fstrim.timer"
+  fi
+
+  # BUG #32/#41: Only enable reflector.timer if reflector is installed AND mirror optimization was requested
+  if [[ "${ARCH_OPTIMIZE_MIRRORS:-no}" == "yes" ]] && pacman -Q reflector >/dev/null 2>&1; then
+    systemctl enable reflector.timer || warn "Failed to enable reflector.timer"
+  fi
+}
+
+post_install_xdg_user_dirs() {
+  [[ -n "${DEWM_SELECTED:-}" ]] || list_has "${ARCH_SELECTED_CATEGORIES:-}" "desktop-common" || return 0
+  [[ -n "${TARGET_USER:-}" ]] || return 0
+
+  pacman -S --needed --noconfirm xdg-user-dirs || warn "Failed to install xdg-user-dirs"
+  if command -v xdg-user-dirs-update >/dev/null 2>&1; then
+    # BUG #37: Explicitly pass the target user's HOME so xdg-user-dirs-update runs in the right context
+    local target_home
+    target_home="$(getent passwd "$TARGET_USER" | cut -d: -f6 || true)"
+    if [[ -z "$target_home" && "$TARGET_USER" == "root" ]]; then
+      target_home="/root"
+    fi
+    if [[ -n "$target_home" && -d "$target_home" ]]; then
+      env HOME="$target_home" USER="$TARGET_USER" \
+        run_as_target_user_argv xdg-user-dirs-update || warn "xdg-user-dirs-update failed for $TARGET_USER"
+    else
+      warn "xdg-user-dirs-update skipped: cannot resolve home for $TARGET_USER"
+    fi
+  fi
+}
+
+post_install_firewall() {
+  # BUG #30: Skip reconfiguration if UFW is already active — preserves user-customized rules
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
+    log "UFW already active and configured. Skipping firewall reconfiguration."
+    return 0
+  fi
+  pacman -S --needed --noconfirm ufw || {
+    warn "Failed to install ufw"
+    return 0
+  }
+  systemctl enable ufw.service || warn "Failed to enable ufw.service"
+  command -v ufw >/dev/null 2>&1 || return 0
+  ufw default deny incoming  || warn "Failed to set UFW default incoming policy"
+  ufw default allow outgoing || warn "Failed to set UFW default outgoing policy"
+  ufw --force enable         || warn "Failed to enable UFW firewall rules"
 }
 
 detect_grub_mkconfig_cmd() {
@@ -2595,50 +2934,115 @@ gpu_detect_boot_modules() {
   printf '%s\n' "$(dedupe_word_list "${modules[*]:-}")"
 }
 
+# Read GRUB_CMDLINE_LINUX_DEFAULT value and detect the quote style used in the file
+_grub_read_cmdline_default() {
+  local grub_file="$1"
+  local val
+  # Try single quotes first, then double quotes
+  val="$(sed -n "s/^GRUB_CMDLINE_LINUX_DEFAULT='\(.*\)'/\1/p" "$grub_file" | head -1)"
+  if [[ -z "$val" ]]; then
+    val="$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/\1/p' "$grub_file" | head -1)"
+  fi
+  printf '%s' "$val"
+}
+
+# Write GRUB_CMDLINE_LINUX_DEFAULT preserving the original quote style
+_grub_write_cmdline_default() {
+  local grub_file="$1"
+  local new_value="$2"
+  local q="'"
+  # BUG #33: Preserve original quote style to avoid duplicate/mismatched lines
+  if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT="' "$grub_file" 2>/dev/null; then
+    q='"'
+  fi
+  if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file"; then
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=${q}${new_value}${q}|" "$grub_file"
+  else
+    printf 'GRUB_CMDLINE_LINUX_DEFAULT=%s%s%s\n' "$q" "$new_value" "$q" >> "$grub_file"
+  fi
+}
+
 configure_gpu_boot_support() {
   local grub_file="/etc/default/grub"
   local mkinit_file="/etc/mkinitcpio.conf"
-  local gpu_modules current_modules changed_mkinit="no" changed_grub="no" current_default
+  local gpu_modules current_modules desired_modules changed_mkinit="no" changed_grub="no" current_default
 
   [[ -f "$mkinit_file" ]] || return 0
 
   gpu_modules="$(gpu_detect_boot_modules)"
   [[ -n "$gpu_modules" ]] || return 0
 
+  # BUG #31: If kernel-bundled NVIDIA is present, strip nvidia modules from the injection list
+  if echo "$gpu_modules" | grep -q 'nvidia'; then
+    if nvidia_module_already_provided 2>/dev/null; then
+      log "Kernel-bundled NVIDIA detected. Skipping nvidia module injection into mkinitcpio."
+      gpu_modules="$(echo "$gpu_modules" | tr ' ' '\n' | grep -v '^nvidia' | tr '\n' ' ' | xargs || true)"
+      [[ -n "$gpu_modules" ]] || return 0
+    elif ! pacman -Qq nvidia-utils >/dev/null 2>&1 && \
+         ! pacman -Qq nvidia-open-dkms >/dev/null 2>&1 && \
+         ! pacman -Qq nvidia-dkms >/dev/null 2>&1 && \
+         ! pacman -Qq nvidia >/dev/null 2>&1; then
+      warn "NVIDIA GPU detected but no NVIDIA driver package is installed. Skipping nvidia module injection into mkinitcpio."
+      gpu_modules="$(echo "$gpu_modules" | tr ' ' '\n' | grep -v '^nvidia' | tr '\n' ' ' | xargs || true)"
+      [[ -n "$gpu_modules" ]] || return 0
+    fi
+  fi
+
+  # ── MODULES injection — idempotency guard ──────────────────────────────────
+  # Only write + rebuild if the MODULES line would actually change.
   if grep -q '^MODULES=' "$mkinit_file"; then
     current_modules="$(sed -n 's/^MODULES=(\(.*\))$/\1/p' "$mkinit_file" | head -n1)"
-    current_modules="$(dedupe_word_list "$current_modules $gpu_modules")"
-    sed -i "s|^MODULES=(.*)|MODULES=(${current_modules})|" "$mkinit_file"
-    changed_mkinit="yes"
+    desired_modules="$(dedupe_word_list "$current_modules $gpu_modules")"
+    if [[ "$desired_modules" != "$(dedupe_word_list "$current_modules")" ]]; then
+      # New modules need to be added — write and mark changed
+      sed -i "s|^MODULES=(.*)|MODULES=(${desired_modules})|" "$mkinit_file"
+      changed_mkinit="yes"
+    fi
+    # else: MODULES already contains everything needed — no write, no rebuild
   else
+    # No MODULES line at all — add it
     printf 'MODULES=(%s)\n' "$gpu_modules" >> "$mkinit_file"
     changed_mkinit="yes"
   fi
 
+  # ── kms hook injection — idempotency guard ─────────────────────────────────
+  # BUG #38: Only inject if kms is not already present in HOOKS
   if grep -q '^HOOKS=' "$mkinit_file" && ! grep -Eq '^HOOKS=.*\bkms\b' "$mkinit_file"; then
-    sed -i '/^HOOKS=/ s/\(HOOKS=(.*\) keyboard/\1 kms keyboard/' "$mkinit_file"
-    if ! grep -Eq '^HOOKS=.*\bkms\b' "$mkinit_file"; then
-      sed -i '/^HOOKS=/ s/^)$/ kms)/' "$mkinit_file"
+    if grep -q 'keyboard' "$mkinit_file"; then
+      sed -i '/^HOOKS=/ s/\(HOOKS=(.*\) keyboard/\1 kms keyboard/' "$mkinit_file"
+    elif grep -q 'modconf' "$mkinit_file"; then
+      sed -i '/^HOOKS=/ s/\(HOOKS=(.*\) modconf/\1 kms modconf/' "$mkinit_file"
+    else
+      sed -i '/^HOOKS=/ s/\(HOOKS=(.*\) filesystems/\1 kms filesystems/' "$mkinit_file" || true
+      if ! grep -Eq '^HOOKS=.*\bkms\b' "$mkinit_file"; then
+        warn "Could not inject kms hook into HOOKS. Add it manually before 'filesystems'."
+      fi
     fi
-    changed_mkinit="yes"
+    # Only count as changed if injection actually put kms in now
+    grep -Eq '^HOOKS=.*\bkms\b' "$mkinit_file" && changed_mkinit="yes"
   fi
 
+  # ── Drop-in warning (CachyOS) ──────────────────────────────────────────────
+  # BUG #38: Warn about CachyOS/drop-in mkinitcpio configs that may also need updating
+  if [[ -d /etc/mkinitcpio.conf.d ]]; then
+    for _dropin in /etc/mkinitcpio.conf.d/*.conf; do
+      [[ -f "$_dropin" ]] && grep -q '^MODULES=' "$_dropin" && \
+        warn "Found mkinitcpio drop-in: $_dropin — GPU MODULES may need manual update there."
+    done
+  fi
+
+  # ── GRUB nvidia_drm.modeset=1 — idempotency guard ─────────────────────────
+  # Only write + regenerate if the param is not already present
   if [[ -f "$grub_file" ]] && list_has "$gpu_modules" "nvidia_drm"; then
-    current_default="$(sed -n "s/^GRUB_CMDLINE_LINUX_DEFAULT='\(.*\)'/\1/p" "$grub_file")"
-    if [[ -z "$current_default" ]]; then
-      current_default="$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/\1/p' "$grub_file")"
-    fi
+    current_default="$(_grub_read_cmdline_default "$grub_file")"
     current_default=" $(echo "${current_default:-}" | tr -s ' ') "
     if [[ "$current_default" != *" nvidia_drm.modeset=1 "* ]]; then
       current_default+="nvidia_drm.modeset=1 "
       current_default="$(echo "$current_default" | xargs)"
-      if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file"; then
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'|" "$grub_file"
-      else
-        echo "GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'" >> "$grub_file"
-      fi
+      _grub_write_cmdline_default "$grub_file" "$current_default"
       changed_grub="yes"
     fi
+    # else: param already present — no write, no grub-mkconfig
   fi
 
   if [[ "$changed_mkinit" == "yes" ]]; then
@@ -2646,6 +3050,8 @@ configure_gpu_boot_support() {
     if command -v mkinitcpio >/dev/null 2>&1; then
       mkinitcpio -P || warn "mkinitcpio failed after GPU boot support changes. Continue with caution and regenerate manually."
     fi
+  else
+    log "GPU boot support already up-to-date. mkinitcpio rebuild skipped."
   fi
 
   if [[ "$changed_grub" == "yes" ]]; then
@@ -2653,6 +3059,7 @@ configure_gpu_boot_support() {
     regenerate_bootloader_config || true
   fi
 }
+
 
 regenerate_bootloader_config() {
   local grub_cmd grub_cfg
@@ -2693,7 +3100,7 @@ regenerate_bootloader_config() {
   fi
   log "GRUB config generated: $grub_cfg"
 
-  if [[ "$BOOT_OS_PROBER" == "yes" ]]; then
+  if [[ "${BOOT_OS_PROBER_ACTION:-skip}" == "on" ]]; then
     if ! grep -qiE 'windows|microsoft' "$grub_cfg" 2>/dev/null; then
       warn "GRUB config generated, but no Windows entry was found in $grub_cfg."
       warn "If Windows exists, verify: Fast Startup disabled, BitLocker state, and matching UEFI/Legacy install mode."
@@ -2704,108 +3111,99 @@ regenerate_bootloader_config() {
 configure_boot_tuning() {
   local grub_file="/etc/default/grub"
   local mkinit_file="/etc/mkinitcpio.conf"
+  local changed_grub="no" changed_mkinit="no"
 
   if [[ ! -f "$grub_file" || ! -f "$mkinit_file" ]]; then
     warn "Skipping boot tuning: missing $grub_file or $mkinit_file"
     return
   fi
 
-  local current_default
-  current_default="$(sed -n "s/^GRUB_CMDLINE_LINUX_DEFAULT='\(.*\)'/\1/p" "$grub_file")"
-  if [[ -z "$current_default" ]]; then
-    current_default="$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/\1/p' "$grub_file")"
-  fi
+  local current_default original_default
+  original_default="$(_grub_read_cmdline_default "$grub_file")"
+  current_default="$original_default"
 
   local normalized_default
   normalized_default=" $(echo "$current_default" | tr -s ' ') "
 
-  if [[ "$BOOT_SILENT" == "yes" ]]; then
-    if [[ -z "$current_default" ]]; then
-      current_default="quiet loglevel=3 udev.log_priority=3 rd.udev.log_priority=3 vt.global_cursor_default=0"
-    else
-      current_default="$normalized_default"
-      for arg in quiet loglevel=3 udev.log_priority=3 rd.udev.log_priority=3 vt.global_cursor_default=0; do
-        [[ "$current_default" == *" $arg "* ]] || current_default+="$arg "
-      done
-      current_default="$(echo "$current_default" | xargs)"
+  if [[ "${BOOT_SPLASH_MODE:-skip}" != "skip" ]]; then
+    current_default=" $current_default "
+    for arg in quiet splash loglevel=3 udev.log_priority=3 rd.udev.log_priority=3 vt.global_cursor_default=0; do
+      current_default="${current_default// $arg / }"
+    done
+    current_default="$(echo "$current_default" | xargs)"
+
+    if [[ "$BOOT_SPLASH_MODE" == "silent" || "$BOOT_SPLASH_MODE" == "plymouth" ]]; then
+      current_default+=" quiet loglevel=3 udev.log_priority=3 rd.udev.log_priority=3 vt.global_cursor_default=0 "
     fi
-    if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file"; then
-      sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'|" "$grub_file"
+    if [[ "$BOOT_SPLASH_MODE" == "plymouth" ]]; then
+      current_default+=" splash "
+    fi
+    current_default="$(echo "$current_default" | xargs)"
+
+    if [[ "$BOOT_SPLASH_MODE" == "plymouth" ]]; then
+      pacman -S --needed --noconfirm plymouth || true
+      if grep -q '^HOOKS=' "$mkinit_file"; then
+        if ! grep -Eq '^HOOKS=.*\bplymouth\b' "$mkinit_file"; then
+          sed -i '/^HOOKS=/ s/\(HOOKS=(.*\) filesystems/\1 plymouth filesystems/' "$mkinit_file"
+          changed_mkinit="yes"
+        fi
+      fi
+      systemctl unmask plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
+      systemctl enable plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
     else
-      echo "GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'" >> "$grub_file"
+      if grep -q '^HOOKS=' "$mkinit_file" && grep -q ' plymouth ' "$mkinit_file"; then
+        sed -i '/^HOOKS=/ s/ plymouth / /g; /^HOOKS=/ s/(plymouth /( /; /^HOOKS=/ s/ plymouth)/)/; /^HOOKS=/ s/[[:space:]]\+/ /g' "$mkinit_file"
+        changed_mkinit="yes"
+      fi
+      systemctl disable --now plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
     fi
   fi
 
-  if [[ "$BOOT_OS_PROBER" == "yes" ]]; then
-    if grep -qE '^#?GRUB_DISABLE_OS_PROBER=' "$grub_file"; then
-      sed -i 's|^#\?GRUB_DISABLE_OS_PROBER=.*|GRUB_DISABLE_OS_PROBER=false|' "$grub_file"
-    else
-      echo 'GRUB_DISABLE_OS_PROBER=false' >> "$grub_file"
+  if [[ "${BOOT_OS_PROBER_ACTION:-skip}" == "on" ]]; then
+    if ! grep -q '^GRUB_DISABLE_OS_PROBER=false' "$grub_file"; then
+      if grep -qE '^#?GRUB_DISABLE_OS_PROBER=' "$grub_file"; then
+        sed -i 's|^#\?GRUB_DISABLE_OS_PROBER=.*|GRUB_DISABLE_OS_PROBER=false|' "$grub_file"
+      else
+        echo 'GRUB_DISABLE_OS_PROBER=false' >> "$grub_file"
+      fi
+      changed_grub="yes"
+    fi
+  elif [[ "${BOOT_OS_PROBER_ACTION:-skip}" == "off" ]]; then
+    if grep -q '^GRUB_DISABLE_OS_PROBER=false' "$grub_file"; then
+      sed -i 's|^GRUB_DISABLE_OS_PROBER=false|#GRUB_DISABLE_OS_PROBER=false|' "$grub_file"
+      changed_grub="yes"
     fi
   fi
 
-  if [[ "$BOOT_PLYMOUTH_ACTION" == "disable" ]]; then
-    if [[ -f "$grub_file" ]]; then
-      current_default=" $(sed -n "s/^GRUB_CMDLINE_LINUX_DEFAULT='\(.*\)'/\1/p" "$grub_file") "
-      if [[ "$current_default" == "  " ]]; then
-        current_default=" $(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/\1/p' "$grub_file") "
-      fi
-      current_default="${current_default// splash / }"
-      current_default="$(echo "$current_default" | xargs)"
-      if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file"; then
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'|" "$grub_file"
+  # Apply GRUB cmdline changes if needed
+  if [[ "$current_default" != "$original_default" ]]; then
+    _grub_write_cmdline_default "$grub_file" "$current_default"
+    changed_grub="yes"
+  fi
+
+  # Only prompt/regenerate if something actually changed
+  if [[ "$changed_grub" == "yes" || "$changed_mkinit" == "yes" ]]; then
+    log "Boot configuration was modified. Regenerating initramfs + grub config now..."
+    if [[ "$changed_mkinit" == "yes" ]]; then
+      if command -v mkinitcpio >/dev/null 2>&1; then
+        mkinitcpio -P || warn "mkinitcpio failed. Continue with caution and regenerate manually."
       else
-        echo "GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'" >> "$grub_file"
+        warn "mkinitcpio not found; skipping initramfs regeneration."
       fi
     fi
-    if grep -q '^HOOKS=' "$mkinit_file"; then
-      sed -i '/^HOOKS=/ s/ plymouth / /g; /^HOOKS=/ s/(plymouth /( /; /^HOOKS=/ s/ plymouth)/)/; /^HOOKS=/ s/[[:space:]]\+/ /g' "$mkinit_file"
-    fi
-    systemctl disable --now plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
-    systemctl mask plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
-  elif [[ "$BOOT_PLYMOUTH_ACTION" == "enable" ]]; then
-    pacman -S --needed --noconfirm plymouth || true
-    if [[ -f "$grub_file" ]]; then
-      current_default=" $(sed -n "s/^GRUB_CMDLINE_LINUX_DEFAULT='\(.*\)'/\1/p" "$grub_file") "
-      if [[ "$current_default" == "  " ]]; then
-        current_default=" $(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/\1/p' "$grub_file") "
+    if [[ "$changed_grub" == "yes" ]]; then
+      if [[ "${BOOT_OS_PROBER_ACTION:-skip}" == "on" ]]; then
+        if ensure_os_prober_installed; then
+          ensure_os_prober_prereqs || true
+          run_os_prober_with_diagnostics || true
+        else
+          warn "Skipping OS detection scan because os-prober is unavailable."
+        fi
       fi
-      [[ "$current_default" == *" splash "* ]] || current_default+="splash "
-      current_default="$(echo "$current_default" | xargs)"
-      if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_file"; then
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'|" "$grub_file"
-      else
-        echo "GRUB_CMDLINE_LINUX_DEFAULT='${current_default}'" >> "$grub_file"
-      fi
+      regenerate_bootloader_config
     fi
-    if grep -q '^HOOKS=' "$mkinit_file"; then
-      if ! grep -Eq '^HOOKS=.*\bplymouth\b' "$mkinit_file"; then
-        sed -i '/^HOOKS=/ s/\(HOOKS=(.*\) filesystems/\1 plymouth filesystems/' "$mkinit_file"
-      fi
-    fi
-    systemctl unmask plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
-    systemctl enable plymouth-start.service plymouth-quit.service plymouth-quit-wait.service 2>/dev/null || true
   else
-    log "Plymouth action set to Skip; leaving current Plymouth integration untouched."
-  fi
-
-  if ask_yes_no 'Regenerate initramfs + grub config now?' 'y'; then
-    if command -v mkinitcpio >/dev/null 2>&1; then
-      mkinitcpio -P || warn "mkinitcpio failed. Continue with caution and regenerate manually."
-    else
-      warn "mkinitcpio not found; skipping initramfs regeneration."
-    fi
-    if [[ "$BOOT_OS_PROBER" == "yes" ]]; then
-      if ensure_os_prober_installed; then
-        ensure_os_prober_prereqs || true
-        run_os_prober_with_diagnostics || true
-      else
-        warn "Skipping OS detection scan because os-prober is unavailable."
-      fi
-    fi
-    regenerate_bootloader_config
-  else
-    warn 'Skipped grub/mkinit regeneration. Run manually later.'
+    log "Boot tuning already up-to-date. Skipping regeneration."
   fi
 }
 
@@ -2887,6 +3285,65 @@ DRIVER_SELECTED_PKGS_AUR="$DRIVER_SELECTED_PKGS_AUR"
 EOM
 
   log "Backup snapshot created: $bdir"
+}
+
+ensure_audio_if_desktop() {
+  [[ -n "${DEWM_SELECTED:-}" ]] || return 0
+
+  # BUG #35: Skip if PipeWire already installed
+  if pacman -Q pipewire >/dev/null 2>&1; then
+    log "PipeWire already installed. Skipping audio setup."
+    return 0
+  fi
+
+  # BUG #35: Avoid installing pipewire-pulse if PulseAudio is present — they conflict
+  if pacman -Q pulseaudio >/dev/null 2>&1; then
+    warn "PulseAudio is installed. Skipping PipeWire install to avoid package conflict."
+    warn "Remove pulseaudio manually if you want to switch to PipeWire."
+    return 0
+  fi
+
+  log "Ensuring desktop audio stack (PipeWire)"
+  pacman -S --needed --noconfirm \
+    pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber || \
+    warn "Failed to install one or more PipeWire audio packages"
+}
+
+post_install_microcode_refresh() {
+  if pacman -Q grub >/dev/null 2>&1 && { pacman -Q intel-ucode >/dev/null 2>&1 || pacman -Q amd-ucode >/dev/null 2>&1; }; then
+    log "Regenerating GRUB config to include microcode changes"
+    regenerate_bootloader_config || true
+  fi
+}
+
+zram_is_configured() {
+  # BUG #34: Expand zram detection to cover CachyOS zramd, zram-init, and active /dev/zram0
+  [[ -f /etc/systemd/zram-generator.conf ]] && return 0
+  [[ -f /usr/lib/systemd/zram-generator.conf ]] && return 0
+  [[ -b /dev/zram0 ]] && return 0
+  systemctl list-unit-files 2>/dev/null | \
+    grep -qE '^(systemd-zram-setup@|zramd|zram-init)' && return 0
+  return 1
+}
+
+enforce_zswap_disabled_if_zram_present() {
+  local grub_file="/etc/default/grub"
+  local current_default
+
+  zram_is_configured || return 0
+  [[ -f "$grub_file" ]] || return 0
+
+  current_default="$(_grub_read_cmdline_default "$grub_file")"
+  current_default=" $(echo "${current_default:-}" | tr -s ' ') "
+
+  if [[ "$current_default" != *" zswap.enabled=0 "* ]]; then
+    current_default+="zswap.enabled=0 "
+    current_default="$(echo "$current_default" | xargs)"
+    # BUG #34: Use shared helper to preserve original quote style
+    _grub_write_cmdline_default "$grub_file" "$current_default"
+    log "Detected zram configuration; added zswap.enabled=0 to GRUB kernel parameters."
+    regenerate_bootloader_config || true
+  fi
 }
 
 precheck_distro() {
@@ -3177,9 +3634,8 @@ print_plan() {
     printf '    Replacement Bootloader: %s\n' "$(tui_bootloader_label "$BOOTLOADER_CHOICE")"
   fi
   if [[ "$BOOT_TUNE_ENABLE" == "yes" ]]; then
-    printf '    Silent Boot: %s\n' "$( [[ "$BOOT_SILENT" == "yes" ]] && printf 'Yes' || printf 'No' )"
-    printf '    OS-Prober: %s\n' "$( [[ "$BOOT_OS_PROBER" == "yes" ]] && printf 'Yes' || printf 'No' )"
-    printf '    Plymouth: %s\n' "$(tui_boot_plymouth_label "$BOOT_PLYMOUTH_ACTION")"
+    printf '    Splash Mode: %s\n' "${BOOT_SPLASH_MODE^}"
+    printf '    OS-Prober: %s\n' "${BOOT_OS_PROBER_ACTION^}"
   fi
   printf '%b╰───────────────────────────────────────────────────────╯%b\n' "$C_MAUVE" "$C_RESET"
 }
@@ -3301,7 +3757,11 @@ main() {
     exit "$wizard_rc"
   fi
 
-  err "Failed to launch the Arctyx modular wizard. Legacy Bash UI flow has been removed."
+  err "Cannot launch the Arctyx wizard. Possible reasons:"
+  err "  - Not running in an interactive TTY"
+  err "  - Python is not installed"
+  err "  - Python curses support is unavailable"
+  err "For non-interactive use: python setup/main.py --action plan|apply|rollback|uninstall"
   exit 1
 }
 

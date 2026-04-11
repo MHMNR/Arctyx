@@ -61,9 +61,8 @@ DEFAULT_STATE: dict[str, Any] = {
     },
     "boot": {
         "enabled": True,
-        "silent": True,
-        "os_prober": True,
-        "plymouth_action": "skip",
+        "splash_mode": "skip",
+        "os_prober_action": "skip",
         "bootloader_action": "keep",
         "replace_bootloader": False,
         "bootloader": "grub",
@@ -86,7 +85,17 @@ def _merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def normalize_state(state: dict[str, Any] | None) -> dict[str, Any]:
-    normalized = _merge_dict(DEFAULT_STATE, state or {})
+    raw = state or {}
+
+    # v3 → v4 migration: boot field rename
+    boot = raw.get("boot", {})
+    if isinstance(boot, dict):
+        if "silent" in boot and "splash_mode" not in boot:
+            boot["splash_mode"] = "silent" if boot.pop("silent") else "skip"
+        if "os_prober" in boot and "os_prober_action" not in boot:
+            boot["os_prober_action"] = "on" if boot.pop("os_prober") else "skip"
+
+    normalized = _merge_dict(DEFAULT_STATE, raw)
 
     if normalized["user"].get("use_current_user") and not normalized["user"].get("target"):
         normalized["user"]["target"] = DEFAULT_STATE["user"]["target"]

@@ -60,6 +60,8 @@ APP_CATEGORIES: dict[str, dict[str, Any]] = {
     "development_tools": {
         "label": "Development Tools",
         "items": [
+            ("android-studio", "Android Studio", "ide"),
+            ("antigravity", "Antigravity", "ide"),
             ("code", "VS Code", "ide"),
             ("codium", "VSCodium", "ide"),
             ("cursor", "Cursor", "ide"),
@@ -124,6 +126,8 @@ APP_CATEGORIES: dict[str, dict[str, Any]] = {
     "utilities": {
         "label": "Utilities",
         "items": [
+            ("virtualbox", "Oracle VirtualBox", "app"),
+            ("virt-manager", "QEMU / Virt-Manager", "app"),
             ("localsend", "LocalSend", "app"),
             ("balena-etcher", "Balena Etcher", "app"),
             ("ventoy", "Ventoy", "app"),
@@ -258,16 +262,21 @@ DRIVER_GROUPS: dict[str, dict[str, Any]] = {
     "gpu": {
         "label": "GPU",
         "items": [
+            ("nvidia-580xx-dkms", "nvidia-580xx-dkms"),
             ("nvidia-open-dkms", "nvidia-open-dkms"),
             ("nvidia-open", "nvidia-open"),
             ("nvidia-dkms", "nvidia-dkms"),
             ("nvidia", "nvidia"),
             ("nvidia-utils", "nvidia-utils"),
             ("nvidia-settings", "nvidia-settings"),
+            ("egl-wayland", "egl-wayland"),
             ("linux-headers", "linux-headers"),
             ("mesa", "mesa"),
             ("vulkan-radeon", "vulkan-radeon"),
+            ("libva-mesa-driver", "libva-mesa-driver"),
+            ("lib32-mesa", "lib32-mesa"),
             ("lib32-vulkan-radeon", "lib32-vulkan-radeon"),
+            ("lib32-libva-mesa-driver", "lib32-libva-mesa-driver"),
             ("vulkan-intel", "vulkan-intel"),
             ("lib32-vulkan-intel", "lib32-vulkan-intel"),
             ("intel-media-driver", "intel-media-driver"),
@@ -302,10 +311,17 @@ DRIVER_GROUPS: dict[str, dict[str, Any]] = {
     },
 }
 
-PLYMOUTH_CHOICES = [
-    ("disable", "Disable", "Remove or avoid Plymouth boot splash integration."),
-    ("enable", "Enable", "Enable Plymouth boot splash support if the rest of the boot stack allows it."),
-    ("skip", "Skip", "Leave the current Plymouth state unchanged."),
+SPLASH_MODE_CHOICES = [
+    ("skip", "Skip", "Leave the current boot output mode unchanged."),
+    ("silent", "Silent / Blank", "Hide all boot text and boot completely silently to a blank screen until login."),
+    ("plymouth", "Plymouth Splash", "Hide text and display a clean graphical loading animation (requires plymouth)."),
+    ("verbose", "Verbose Text", "Show standard linux kernel and systemd boot messages."),
+]
+
+OS_PROBER_CHOICES = [
+    ("skip", "Skip", "Leave the current OS-Prober setting unchanged."),
+    ("on", "Enable", "Allow GRUB to detect and add other operating systems to the boot menu."),
+    ("off", "Disable", "Stop GRUB from scanning for other operating systems."),
 ]
 
 BOOTLOADER_ACTION_CHOICES = [
@@ -641,8 +657,12 @@ def driver_mode_label(choice: str) -> str:
     return choice_label(choice, DRIVER_CHOICES)
 
 
-def plymouth_action_label(choice: str) -> str:
-    return choice_label(choice, PLYMOUTH_CHOICES)
+def splash_mode_label(choice: str) -> str:
+    return choice_label(choice, SPLASH_MODE_CHOICES)
+
+
+def os_prober_action_label(choice: str) -> str:
+    return choice_label(choice, OS_PROBER_CHOICES)
 
 
 def bootloader_label(choice: str) -> str:
@@ -674,7 +694,7 @@ class WizardState:
     shell_choice: str = "bash"
     package_categories: list[str] = field(default_factory=lambda: ["core-system", "cli-utils"])
     optimize_mirrors: bool = False
-    enable_multilib: bool = True
+    enable_multilib: bool = False
     enable_chaotic_aur: bool = False
     aur_helper: str = "skip"
     selected_apps: list[str] = field(default_factory=list)
@@ -700,9 +720,8 @@ class WizardState:
     driver_mode: str = "skip"
     driver_groups: list[str] = field(default_factory=list)
     driver_packages: list[str] = field(default_factory=list)
-    boot_silent: bool = True
-    boot_os_prober: bool = True
-    boot_plymouth_action: str = "skip"
+    boot_splash_mode: str = "skip"
+    boot_os_prober_action: str = "skip"
     detected_plymouth_enabled: bool = field(default_factory=detect_plymouth_enabled)
     bootloader_action: str = "keep"
     boot_replace_bootloader: bool = False
@@ -756,7 +775,7 @@ class WizardState:
             shell_choice=shell_choice,
             package_categories=list(packages.get("categories", ["core-system", "cli-utils"])),
             optimize_mirrors=bool(packages.get("optimize_mirrors", False)),
-            enable_multilib=bool(packages.get("multilib", True)),
+            enable_multilib=bool(packages.get("multilib", False)),
             enable_chaotic_aur=bool(packages.get("chaotic_aur", False)),
             aur_helper=packages.get("aur_helper", "skip"),
             selected_apps=list(apps.get("selected", [])),
@@ -782,9 +801,8 @@ class WizardState:
             driver_mode=drivers.get("mode", "skip"),
             driver_groups=list(drivers.get("selected_groups", [])),
             driver_packages=list(drivers.get("pacman_packages", [])),
-            boot_silent=bool(boot.get("silent", True)),
-            boot_os_prober=bool(boot.get("os_prober", True)),
-            boot_plymouth_action=boot.get("plymouth_action", "skip"),
+            boot_splash_mode=boot.get("splash_mode", "skip"),
+            boot_os_prober_action=boot.get("os_prober_action", "skip"),
             detected_plymouth_enabled=detected_plymouth_enabled,
             bootloader_action=boot.get("bootloader_action", "replace" if boot.get("replace_bootloader", False) else "keep"),
             boot_replace_bootloader=bool(boot.get("replace_bootloader", False)),
@@ -845,9 +863,8 @@ class WizardState:
         state["drivers"]["pacman_packages"] = list(self.driver_packages)
 
         state["boot"]["enabled"] = True
-        state["boot"]["silent"] = self.boot_silent
-        state["boot"]["os_prober"] = self.boot_os_prober
-        state["boot"]["plymouth_action"] = self.boot_plymouth_action
+        state["boot"]["splash_mode"] = self.boot_splash_mode
+        state["boot"]["os_prober_action"] = self.boot_os_prober_action
         self.boot_replace_bootloader = self.bootloader_action == "replace"
         state["boot"]["bootloader_action"] = self.bootloader_action
         state["boot"]["replace_bootloader"] = self.boot_replace_bootloader
@@ -902,6 +919,6 @@ class WizardState:
             f"Login: {login_method_label(self.login_method)} | DM: {display_manager_label(self.display_manager)} | TTY: {self.tty_device}",
             f"Autostart: {self.autostart_action.title()} | Session: {autostart_session_label(self.autostart_session)}",
             f"Drivers: {driver_mode_label(self.driver_mode)} | Groups: {', '.join(driver_group_labels) if driver_group_labels else 'None'}",
-            f"Boot: Bootloader Action={bootloader_action_label(self.bootloader_action)} | Bootloader={bootloader_label(self.bootloader_choice)} | Silent={_bool_label(self.boot_silent)} | OS-Prober={_bool_label(self.boot_os_prober)} | Plymouth={plymouth_action_label(self.boot_plymouth_action)} (Detected {'Enabled' if self.detected_plymouth_enabled else 'Disabled'})",
+            f"Boot: Bootloader Action={bootloader_action_label(self.bootloader_action)} | Bootloader={bootloader_label(self.bootloader_choice)} | Splash Mode={splash_mode_label(self.boot_splash_mode)} | OS-Prober={os_prober_action_label(self.boot_os_prober_action)}",
             f"Save Profile: {_bool_label(self.save_profile)}",
         ]

@@ -76,13 +76,13 @@ class WizardInstaller:
                 self.save()
                 return "uninstall"
 
-            if self.had_existing_state:
+            if self.had_existing_state and self._has_saved_progress():
                 resume_choice = ui.ask_resume_state()
                 if resume_choice == "__back__":
                     continue
                 if resume_choice == "fresh":
                     self._reset_state()
-            elif self._has_saved_progress():
+            else:
                 self._reset_state()
 
             self.raw_state["workflow"]["mode"] = "install"

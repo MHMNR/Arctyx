@@ -67,7 +67,19 @@ def run_app(argv: list[str] | None = None) -> int:
     app = WizardInstaller(state_path=state_store.path)
     result = app.run()
     if result in {"apply", "plan", "rollback", "uninstall"}:
-        return _run_backend_action(result)
+        exit_code = _run_backend_action(result)
+        should_delete = (
+            exit_code == 0
+            and result == "apply"
+            and not app.raw_state.get("profile", {}).get("save", False)
+        )
+        if should_delete:
+            if state_store.path and state_store.path.exists():
+                try:
+                    state_store.path.unlink()
+                except OSError:
+                    pass
+        return exit_code
     return 0
 
 

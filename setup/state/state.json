@@ -67,10 +67,8 @@
     "aur_packages": []
   },
   "boot": {
-    "enabled": true,
-    "silent": true,
-    "os_prober": true,
-    "plymouth_action": "skip",
+    "splash_mode": "silent",
+    "os_prober_action": "on",
     "bootloader_action": "keep",
     "replace_bootloader": false,
     "bootloader": "grub"

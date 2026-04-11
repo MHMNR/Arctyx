@@ -35,6 +35,14 @@ def _default_cache_home() -> Path:
 
 
 def default_state_path() -> Path:
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir) / ".cache" / "arctyx" / "state.json"
+        except KeyError:
+            pass
+    if os.getuid() == 0:
+        return Path("/var/tmp/arctyx/state.json")
     return _default_cache_home() / "arctyx" / "state.json"
 
 

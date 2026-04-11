@@ -69,8 +69,9 @@ backend_grub_install() {
   if backend_is_uefi; then
     esp_dir="$(backend_detect_esp_dir || true)"
     if [[ -z "$esp_dir" ]]; then
-      warn "UEFI system detected, but no EFI system partition mount point was found."
-      return 1
+      warn "UEFI system detected, but no EFI system partition mount point was found. Skipping GRUB install."
+      warn "Mount your ESP at /boot/efi, /efi, or /boot and re-run if you want Arctyx to install GRUB."
+      return 0
     fi
     grub-install --target=x86_64-efi --efi-directory="$esp_dir" --bootloader-id="$bootloader_id" --recheck || {
       warn "GRUB installation failed."
@@ -94,8 +95,8 @@ backend_systemd_boot_install() {
   fi
   esp_dir="$(backend_detect_esp_dir || true)"
   if [[ -z "$esp_dir" ]]; then
-    warn "Unable to detect the EFI system partition mount point for systemd-boot."
-    return 1
+    warn "Unable to detect the EFI system partition mount point for systemd-boot. Skipping install."
+    return 0
   fi
   bootctl --path="$esp_dir" --efi-boot-option-description="$boot_label" install || {
     warn "systemd-boot installation failed."
@@ -139,8 +140,8 @@ backend_direct_uefi_entry_install() {
   fi
   esp_dir="$(backend_detect_esp_dir || true)"
   if [[ -z "$esp_dir" ]]; then
-    warn "Unable to detect the EFI system partition mount point for direct UEFI entry setup."
-    return 1
+    warn "Unable to detect the EFI system partition mount point for direct UEFI entry setup. Skipping entry creation."
+    return 0
   fi
   esp_source="$(findmnt -rn -o SOURCE "$esp_dir" || true)"
   if [[ -z "$esp_source" ]]; then
@@ -236,4 +237,6 @@ backend_boot_apply() {
   if [[ "$BOOT_TUNE_ENABLE" == "yes" ]]; then
     configure_boot_tuning
   fi
+  enforce_zswap_disabled_if_zram_present
+  post_install_microcode_refresh
 }

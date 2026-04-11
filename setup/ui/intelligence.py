@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -9,6 +10,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from setup.ui.state import WizardState, desktop_label
+
+
+# BUG #36: Detect kernel-bundled NVIDIA packages (CachyOS, XanMod, Liquorix, etc.)
+def _detect_kernel_bundled_nvidia() -> list[str]:
+    try:
+        result = subprocess.run(
+            ["pacman", "-Qq"],
+            capture_output=True, text=True, check=False
+        )
+        return [
+            p for p in result.stdout.splitlines()
+            if re.match(r'^linux-.*nvidia', p)
+        ]
+    except FileNotFoundError:
+        return []
 
 
 @dataclass
@@ -124,9 +140,8 @@ def _review_state_signature(state: WizardState) -> tuple:
         state.driver_mode,
         tuple(state.driver_groups),
         tuple(state.driver_packages),
-        state.boot_silent,
-        state.boot_os_prober,
-        state.boot_plymouth_action,
+        state.boot_splash_mode,
+        state.boot_os_prober_action,
         state.bootloader_action,
         state.bootloader_choice,
         state.save_profile,
@@ -164,6 +179,21 @@ def build_review_report(state: WizardState) -> ReviewReport:
     if header_status is not None:
         validations.append(f"Kernel Headers: {'Installed' if header_status else 'Missing'} ({header_detail})")
 
+    # BUG #36: Warn when kernel-bundled NVIDIA conflicts with selected driver packages
+    bundled_nvidia = _detect_kernel_bundled_nvidia()
+    nvidia_driver_pkgs = {"nvidia-open-dkms", "nvidia-open", "nvidia-dkms", "nvidia"}
+    user_wants_nvidia = any(pkg in nvidia_driver_pkgs for pkg in state.driver_packages)
+    if bundled_nvidia:
+        validations.append(f"Kernel NVIDIA Module: Bundled ({', '.join(bundled_nvidia)})")
+        if user_wants_nvidia:
+            warnings.append(
+                f"Kernel-bundled NVIDIA detected ({', '.join(bundled_nvidia)}). "
+                "Installing a separate nvidia-open-dkms or nvidia-dkms will conflict. "
+                "Arctyx will automatically skip the kernel module package and install userspace tools only."
+            )
+    elif user_wants_nvidia:
+        validations.append("Kernel NVIDIA Module: Not Bundled (standard install)")
+
     if state.bootloader_action in {"fix", "replace"}:
         validations.append(f"Bootloader Action: {state.bootloader_action.replace('-', ' ').title()}")
     else:
@@ -179,7 +209,7 @@ def build_review_report(state: WizardState) -> ReviewReport:
         if state.bootloader_choice == "grub" and not boot_mounted:
             warnings.append("/boot is not mounted. GRUB config generation or reinstall may fail until /boot is mounted.")
 
-    if state.boot_os_prober and not os_prober_available:
+    if state.boot_os_prober_action == "on" and not os_prober_available:
         warnings.append("OS-Prober is enabled but not currently installed. Arctyx will try to auto-install it during apply.")
     if pacman_lock:
         warnings.append("Pacman lock file is present. Another package operation may still be active.")
@@ -209,9 +239,9 @@ def build_review_report(state: WizardState) -> ReviewReport:
     if any(session in state.desktop_sessions for session in {"hyprland", "sway", "river", "niri"}) and state.login_method == "display-manager" and state.display_manager == "none":
         recommendations.append("For Wayland compositors, either choose a display manager explicitly or keep TTY Autologin for a lighter setup.")
 
-    if state.bootloader_action == "replace" and state.bootloader_choice == "grub" and not state.boot_os_prober:
+    if state.bootloader_action == "replace" and state.bootloader_choice == "grub" and state.boot_os_prober_action == "off":
         recommendations.append("If you dual-boot with Windows or another OS, enabling OS-Prober with GRUB is usually the safer choice.")
-    if state.bootloader_action == "keep" and state.boot_os_prober and not os_prober_available:
+    if state.bootloader_action == "keep" and state.boot_os_prober_action == "on" and not os_prober_available:
         recommendations.append("If you do not dual-boot, disabling OS-Prober avoids an unnecessary extra package and scan.")
     if pacman_lock:
         recommendations.append("If no package manager is actually running, remove the stale pacman lock before applying.")

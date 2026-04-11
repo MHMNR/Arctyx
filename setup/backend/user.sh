@@ -66,6 +66,8 @@ backend_rollback_from_backup() {
     exit 1
   fi
 
+  warn "Rollback restores the saved managed configuration files only."
+  warn "It does not roll back installed packages, package databases, or broader system state."
   log "Restoring from $bdir/state-before.tar"
   tar -xpf "$bdir/state-before.tar" -C /
   systemctl daemon-reload || true
@@ -100,7 +102,7 @@ backend_save_profile() {
   [[ "$SAVE_PROFILE" == "yes" ]] || return 0
   mkdir -p "$PROFILE_ROOT"
   local name pf
-  name="$(ask_input_default 'Profile name' "${TARGET_USER}-${TS}")"
+  name="${PROFILE_NAME:-${TARGET_USER}-${TS}}"
   pf="$PROFILE_ROOT/${name}.env"
 
   cat > "$pf" <<EOP
@@ -141,9 +143,8 @@ CUSTOM_AUTOSTART_CMD="$CUSTOM_AUTOSTART_CMD"
 AUTOSTART_INSTALL_MISSING_SESSION=$AUTOSTART_INSTALL_MISSING_SESSION
 AUTOSTART_SESSION_INSTALL_PROFILE=$AUTOSTART_SESSION_INSTALL_PROFILE
 BOOT_TUNE_ENABLE=$BOOT_TUNE_ENABLE
-BOOT_SILENT=$BOOT_SILENT
-BOOT_OS_PROBER=$BOOT_OS_PROBER
-BOOT_PLYMOUTH_ACTION=$BOOT_PLYMOUTH_ACTION
+BOOT_SPLASH_MODE=$BOOT_SPLASH_MODE
+BOOT_OS_PROBER_ACTION=$BOOT_OS_PROBER_ACTION
 BOOTLOADER_ACTION=$BOOTLOADER_ACTION
 BOOTLOADER_REPLACE=$BOOTLOADER_REPLACE
 BOOTLOADER_CHOICE=$BOOTLOADER_CHOICE

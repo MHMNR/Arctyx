@@ -24,4 +24,13 @@ backend_packages_apply() {
   install_arch_base_if_selected
   install_oh_my_zsh_if_selected
   set_default_shell_if_selected
+  post_install_networkmanager
+  post_install_docker
+  post_install_bluetooth
+  post_install_virt_manager
+  post_install_virtualbox
+  post_install_rustup_default_toolchain
+  post_install_storage_maintenance
+  post_install_xdg_user_dirs
+  post_install_firewall
 }
