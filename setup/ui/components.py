@@ -81,29 +81,93 @@ class WizardUI:
 
         palette["title"] = curses.color_pair(1) | curses.A_BOLD
         palette["subtitle"] = curses.color_pair(2) | curses.A_DIM
-        palette["footer"] = curses.color_pair(5) | curses.A_DIM
+        palette["footer"] = curses.color_pair(4) | curses.A_DIM
         palette["label"] = curses.color_pair(2)
-        palette["status"] = curses.color_pair(6) | curses.A_BOLD
-        palette["status_active"] = curses.color_pair(4) | curses.A_BOLD
-        palette["preview"] = curses.color_pair(1)
-        palette["marker_on"] = curses.color_pair(4) | curses.A_BOLD
+        palette["status"] = curses.color_pair(5) | curses.A_BOLD
+        palette["status_active"] = curses.color_pair(1) | curses.A_BOLD
+        palette["preview"] = curses.color_pair(4) | curses.A_DIM
+        palette["marker_on"] = curses.color_pair(3) | curses.A_BOLD
         palette["marker_off"] = curses.color_pair(2) | curses.A_DIM
         palette["active"] = curses.color_pair(1) | curses.A_BOLD
-        palette["cursor"] = curses.color_pair(2) | curses.A_BOLD
-        palette["prompt"] = curses.color_pair(3) | curses.A_BOLD
+        palette["cursor"] = curses.color_pair(4) | curses.A_BOLD
+        palette["prompt"] = curses.color_pair(5) | curses.A_BOLD
         palette["input"] = curses.color_pair(4) | curses.A_BOLD
-        palette["summary_key"] = curses.color_pair(3) | curses.A_BOLD
+        palette["summary_key"] = curses.color_pair(1) | curses.A_BOLD
         palette["summary_value"] = curses.color_pair(2)
         palette["choice_yes"] = curses.color_pair(4) | curses.A_BOLD
         palette["choice_no"] = curses.color_pair(3) | curses.A_BOLD
-        palette["selected_badge"] = curses.color_pair(6) | curses.A_BOLD
+        palette["selected_badge"] = curses.color_pair(5) | curses.A_BOLD
         palette["footer_key"] = curses.color_pair(1) | curses.A_BOLD
         palette["warning"] = curses.color_pair(3) | curses.A_BOLD
+        palette["recommendation"] = curses.color_pair(4) | curses.A_BOLD
+        palette["success"] = curses.color_pair(4) | curses.A_BOLD
+        palette["detail_key"] = curses.color_pair(4) | curses.A_BOLD
+        palette["detail_value"] = curses.color_pair(5) | curses.A_BOLD
+
+        if not curses.has_colors():
+            return palette
+
+        # Convert Hex to Curses RGB (0-1000 scale)
+        # Background: #1E1E2E -> 118, 118, 180
+        # Foreground: #CDD6F4 -> 804, 839, 957
+        # Primary:    #89B4FA -> 537, 706, 980
+        # Secondary:  #F38BA8 -> 953, 545, 659
+        # Accent:     #A6E3A1 -> 651, 890, 631
+        # Warning:    #F9E2AF -> 976, 886, 686
+        # Muted:      #6C7086 -> 424, 439, 525
+
+        if curses.can_change_color():
+            curses.init_color(11, 804, 839, 957)  # Fg
+            curses.init_color(12, 537, 706, 980)  # Primary
+            curses.init_color(13, 953, 545, 659)  # Secondary/Error
+            curses.init_color(14, 651, 890, 631)  # Accent
+            curses.init_color(15, 976, 886, 686)  # Warning
+            curses.init_color(16, 424, 439, 525)  # Muted
+            
+            bg = -1
+            curses.init_pair(1, 12, bg) # Primary on Bkg
+            curses.init_pair(2, 11, bg) # Fg on Bkg
+            curses.init_pair(3, 15, bg) # Warning on Bkg
+            curses.init_pair(4, 14, bg) # Accent on Bkg
+            curses.init_pair(5, 13, bg) # Secondary on Bkg
+            curses.init_pair(6, 16, bg) # Muted on Bkg
+        else:
+            # Fallback to standard 256 colors
+            bg = -1
+            curses.init_pair(1, 111, bg) # Blue
+            curses.init_pair(2, 252, bg) # Grey/White
+            curses.init_pair(3, 221, bg) # Yellow
+            curses.init_pair(4, 120, bg) # Green
+            curses.init_pair(5, 210, bg) # Red/Pink
+            curses.init_pair(6, 244, bg) # Muted
+
+        palette["title"] = curses.color_pair(1) | curses.A_BOLD
+        palette["subtitle"] = curses.color_pair(6) | curses.A_DIM
+        palette["footer"] = curses.color_pair(6) | curses.A_DIM
+        palette["label"] = curses.color_pair(2)
+        palette["status"] = curses.color_pair(4) | curses.A_BOLD
+        palette["status_active"] = curses.color_pair(1) | curses.A_BOLD
+        palette["preview"] = curses.color_pair(6)
+        palette["marker_on"] = curses.color_pair(4) | curses.A_BOLD
+        palette["marker_off"] = curses.color_pair(6) | curses.A_DIM
+        palette["active"] = curses.color_pair(1) | curses.A_BOLD
+        palette["cursor"] = curses.color_pair(5) | curses.A_BOLD
+        palette["prompt"] = curses.color_pair(1) | curses.A_BOLD
+        palette["input"] = curses.color_pair(4) | curses.A_BOLD
+        palette["summary_key"] = curses.color_pair(1) | curses.A_BOLD
+        palette["summary_value"] = curses.color_pair(2)
+        palette["choice_yes"] = curses.color_pair(4) | curses.A_BOLD
+        palette["choice_no"] = curses.color_pair(4) | curses.A_BOLD
+        palette["selected_badge"] = curses.color_pair(3) | curses.A_BOLD
+        palette["footer_key"] = curses.color_pair(3) | curses.A_BOLD
+        palette["warning"] = curses.color_pair(3) | curses.A_BOLD
+        palette["critical_alert"] = curses.color_pair(5) | curses.A_BOLD
         palette["recommendation"] = curses.color_pair(1) | curses.A_BOLD
         palette["success"] = curses.color_pair(4) | curses.A_BOLD
+        palette["detail_key"] = curses.color_pair(1) | curses.A_BOLD
+        palette["detail_value"] = curses.color_pair(2) | curses.A_BOLD
         return palette
 
-    def _draw_segments(self, y: int, x: int, segments: list[tuple[str, int]]) -> None:
         _height, width = self.stdscr.getmaxyx()
         cur_x = x
         for text, attr in segments:
@@ -147,6 +211,8 @@ class WizardUI:
                 attr = self.palette["choice_yes"]
             elif stripped in {"no", "disable", "disabled", "skip", "off", "false"}:
                 attr = self.palette["choice_no"]
+            elif stripped in {"aur", "custom", "external"}:
+                attr = self.palette["status"]
             elif token in {"|", ","}:
                 attr = self.palette["subtitle"]
             else:
@@ -169,15 +235,17 @@ class WizardUI:
     def draw_choice_rows(
         self,
         row: int,
-        options: list[tuple[str, str, bool, str]],
+        options: list[tuple[str, str, bool, str, bool]],
         selected_index: int = 0,
         mode: str = "radio",
+        offset: int = 0,
+        limit: int = 999,
     ) -> int:
         base_x = 4
         _height, width = self.stdscr.getmaxyx()
         available = max(16, width - base_x - 1)
-        max_label = max((len(label) for _value, label, _checked, _secondary in options), default=12)
-        max_secondary = max((len(secondary) for _value, _label, _checked, secondary in options), default=0)
+        max_label = max((len(label) for _value, label, _checked, _secondary, _disabled in options), default=12)
+        max_secondary = max((len(secondary) for _value, _label, _checked, secondary, _disabled in options), default=0)
         gap = 3
         marker_prefix_width = 4
         label_width = min(max_label + 2, max(16, available - max_secondary - gap - marker_prefix_width))
@@ -188,20 +256,29 @@ class WizardUI:
             badge_x = base_x + 2 + 4 + 1 + label_width + gap
             secondary_x = badge_x + badge_width + gap
         current_row = row
-        for index, (value, label, checked, secondary) in enumerate(options):
+        visible_options = options[offset : offset + limit]
+        for i, (value, label, checked, secondary, disabled) in enumerate(visible_options):
+            index = offset + i
             active = index == selected_index
             cursor = ">" if active else " "
             marker = "●" if mode == "radio" and checked else "○" if mode == "radio" else "[✓]" if checked else "[ ]"
-            marker_attr = self.palette["marker_on"] if checked else self.palette["marker_off"]
-            label_attr = self.palette["active"] if active else self.palette["label"]
-            extra_attr = self.palette["active"] if active else self.palette["selected_badge"]
+            
+            # Colors
             extra = ""
-            if value in {"yes", "y"}:
-                label_attr = self.palette["active"] if active else self.palette["choice_yes"]
-                extra_attr = self.palette["label"] if active else self.palette["choice_yes"]
-            elif value in {"no", "n"}:
-                label_attr = self.palette["active"] if active else self.palette["choice_no"]
-                extra_attr = self.palette["label"] if active else self.palette["choice_no"]
+            marker_attr = self.palette["marker_on"] if checked else self.palette["marker_off"]
+            if disabled:
+                marker_attr = self.palette["preview"] | curses.A_DIM
+                label_attr = self.palette["preview"] | curses.A_DIM
+                extra_attr = self.palette["preview"] | curses.A_DIM
+            else:
+                label_attr = self.palette["active"] if active else self.palette["label"]
+                extra_attr = self.palette["active"] if active else self.palette["selected_badge"]
+                if value in {"yes", "y"}:
+                    label_attr = self.palette["active"] if active else self.palette["choice_yes"]
+                    extra_attr = self.palette["label"] if active else self.palette["choice_yes"]
+                elif value in {"no", "n"}:
+                    label_attr = self.palette["active"] if active else self.palette["choice_no"]
+                    extra_attr = self.palette["label"] if active else self.palette["choice_no"]
             if mode == "checkbox" and checked:
                 extra = " selected"
             _safe_addstr(self.stdscr, current_row, base_x, " " * max(0, width - base_x - 1), 0)
@@ -368,22 +445,31 @@ class WizardUI:
                 line_type = "keyed"
             for wrapped in textwrap.wrap(paragraph, width=wrap_width) or [""]:
                 rendered_lines.append((wrapped, line_type))
-        for offset, (line, line_type) in enumerate(rendered_lines, start=1):
-            if line_type == "blank":
+        for offset, (line, _line_type) in enumerate(rendered_lines, start=1):
+            if not line.strip():
                 continue
-            if line_type == "keyed" and ":" in line:
+            if ":" in line:
                 key, value = line.split(":", 1)
                 self._draw_segments(
                     row + offset,
                     4,
                     [
-                        (f"{key}:", self.palette["summary_key"]),
+                        (f"{key}:", self.palette["detail_key"]),
                         (" ", self.palette["label"]),
-                        (value.strip(), self.palette["preview"]),
+                        (value.strip(), self.palette["detail_value"]),
                     ],
                 )
             else:
-                _safe_addstr(self.stdscr, row + offset, 4, line, self.palette["summary_value"])
+                _safe_addstr(self.stdscr, row + offset, 4, line, self.palette["label"])
+
+    def _draw_segments(self, y: int, x: int, segments: list[tuple[str, int]]) -> None:
+        _height, width = self.stdscr.getmaxyx()
+        cur_x = x
+        for text, attr in segments:
+            if cur_x >= width - 1:
+                break
+            _safe_addstr(self.stdscr, y, cur_x, text[:width - 1 - cur_x], attr)
+            cur_x += len(text)
 
     def _section_lines(self, heading: str, items: list[str], empty_text: str, attr: int) -> list[tuple[str, int]]:
         lines: list[tuple[str, int]] = [(heading, self.palette["summary_key"])]
@@ -391,7 +477,12 @@ class WizardUI:
             lines.append((f"  - {empty_text}", self.palette["subtitle"]))
             return lines
         for item in items:
-            lines.append((f"  - {item}", attr))
+            current_attr = attr
+            text = item
+            if "[CRITICAL]" in item:
+                current_attr = self.palette["choice_no"]
+                text = item.replace("[CRITICAL]", "").strip()
+            lines.append((f"  - {text}", current_attr))
         return lines
 
     def _fit_review_lines(self, sections: list[tuple[str, int]]) -> list[tuple[str, int]]:
@@ -404,12 +495,14 @@ class WizardUI:
         trimmed.append((f"  ... {hidden} More Line(s)", self.palette["subtitle"]))
         return trimmed
 
-    def _normalize_choice_option(self, option: tuple) -> tuple[str, str, str, str]:
-        if len(option) >= 4:
-            return option[0], option[1], option[2], option[3]
+    def _normalize_choice_option(self, option: tuple) -> tuple[str, str, str, str, bool]:
+        if len(option) >= 5:
+            return option[0], option[1], option[2], option[3], bool(option[4])
+        if len(option) == 4:
+            return option[0], option[1], option[2], option[3], False
         if len(option) == 3:
-            return option[0], option[1], option[2], ""
-        return option[0], option[1], "", ""
+            return option[0], option[1], option[2], "", False
+        return option[0], option[1], "", "", False
 
     def _normalize_menu_option(self, option: tuple) -> tuple[str, str, str, str, str]:
         if len(option) >= 5:
@@ -576,7 +669,7 @@ class WizardUI:
             self.clear()
             row = self.draw_header()
             row = self.draw_step_title(row, "Quit Arctyx", "A setup task is still in progress. Quit now?")
-            rendered = [(value, label, i == index, "") for i, (value, label) in enumerate(options)]
+            rendered = [(value, label, i == index, "", False) for i, (value, label) in enumerate(options)]
             self.draw_choice_rows(row, rendered, selected_index=index, mode="radio")
             self.draw_footer("▲/▼ Move • ◀ Back • ▶ Confirm • Enter Confirm • Ctrl+C Quit")
             self.refresh()
@@ -611,7 +704,7 @@ class WizardUI:
             rendered = []
             for i, label in enumerate(choices):
                 value = "yes" if i == 0 else "no"
-                rendered.append((value, label, i == index, ""))
+                rendered.append((value, label, i == index, "", False))
             options_end_row = self.draw_choice_rows(row, rendered, selected_index=index, mode="radio")
             detail = f"Yes: Apply this setting.\nNo: Leave this setting disabled or unchanged."
             self.draw_detail_block(options_end_row + 1, "Details", detail if index == 0 else detail)
@@ -649,15 +742,28 @@ class WizardUI:
         subtitle: str | None = None,
     ) -> str:
         normalized_options = [self._normalize_choice_option(option) for option in options]
-        option_values = [value for value, _label, _detail, _secondary in normalized_options]
-        default_index = next((i for i, (value, _label, _detail, _secondary) in enumerate(normalized_options) if value == selected_value), 0)
+        option_values = [value for value, _label, _detail, _secondary, _disabled in normalized_options]
+        default_index = next((i for i, (value, _label, _detail, _secondary, _disabled) in enumerate(normalized_options) if value == selected_value), 0)
         index = self._restore_cursor("radio", title, option_values, default_index)
+        
+        offset = 0
         while True:
+            height, _width = self.stdscr.getmaxyx()
+            # Reserve space for Header(2), Title(3), Detail(6), Footer(3), Spacer(2) = ~16 rows
+            view_limit = max(5, height - 16)
+            
+            # Ensure cursor is in view
+            if index < offset:
+                offset = index
+            elif index >= offset + view_limit:
+                offset = index - view_limit + 1
+
             self.clear()
             row = self.draw_header()
             row = self.draw_step_title(row, title, subtitle)
-            rendered = [(_value, label, i == index, secondary) for i, (_value, label, _detail, secondary) in enumerate(normalized_options)]
-            options_end_row = self.draw_choice_rows(row, rendered, selected_index=index, mode="radio")
+            rendered = [(_value, label, i == index, secondary, disabled) for i, (_value, label, _detail, secondary, disabled) in enumerate(normalized_options)]
+            options_end_row = self.draw_choice_rows(row, rendered, selected_index=index, mode="radio", offset=offset, limit=view_limit)
+            
             self.draw_detail_block(options_end_row + 1, "Details", normalized_options[index][2])
             self.draw_footer("▲/▼ Move • ◀ Back • ▶ Confirm • Space/Enter Confirm • Ctrl+C Quit")
             self.refresh()
@@ -735,18 +841,46 @@ class WizardUI:
         options: list[tuple],
         selected_values: list[str],
         subtitle: str | None = None,
+        toggle_map: dict[str, list[str]] | None = None,
+        rule_callback: Any | None = None,
     ) -> list[str]:
         selected = set(selected_values)
-        normalized_options = [self._normalize_choice_option(option) for option in options]
-        option_values = [value for value, _label, _detail, _secondary in normalized_options]
+        raw_normalized = [self._normalize_choice_option(option) for option in options]
+        option_values = [v for v, _l, _d, _s, _dis in raw_normalized]
         index = self._restore_cursor("checkbox", title, option_values, 0)
+        
+        offset = 0
         while True:
+            # Re-evaluate rules every iteration
+            blocked_map: dict[str, str] = {}
+            if rule_callback:
+                blocked_map = rule_callback(selected)
+            
+            # Re-generate normalized options with dynamic blocked status
+            current_options = []
+            for v, label, detail, secondary, disabled in raw_normalized:
+                is_blocked = v in blocked_map
+                final_detail = blocked_map[v] if is_blocked else detail
+                current_options.append((v, label, final_detail, secondary, disabled or is_blocked))
+
+            height, _width = self.stdscr.getmaxyx()
+            # Header(2), Title(3), Detail(6), Footer(3), Spacer(2) = ~16 rows
+            view_limit = max(5, height - 16)
+
+            if index < offset:
+                offset = index
+            elif index >= offset + view_limit:
+                offset = index - view_limit + 1
+
             self.clear()
             row = self.draw_header()
             row = self.draw_step_title(row, title, subtitle)
-            rendered = [(value, label, value in selected, secondary) for value, label, _detail, secondary in normalized_options]
-            options_end_row = self.draw_choice_rows(row, rendered, selected_index=index, mode="checkbox")
-            self.draw_detail_block(options_end_row + 1, "Details", normalized_options[index][2])
+            
+            # Prepare rendering data for draw_choice_rows (expects 5-tuple)
+            rendered = [(v, l, v in selected, s, d) for v, l, _det, s, d in current_options]
+            options_end_row = self.draw_choice_rows(row, rendered, selected_index=index, mode="checkbox", offset=offset, limit=view_limit)
+            
+            self.draw_detail_block(options_end_row + 1, "Details", current_options[index][2])
             self.draw_footer("▲/▼ Move • ◀ Back • Space Toggle • Enter/D Done • Ctrl+C Quit")
             self.refresh()
 
@@ -761,14 +895,24 @@ class WizardUI:
                 self._remember_cursor("checkbox", title, option_values, index)
                 return BACK
             elif key == "space":
-                value = normalized_options[index][0]
+                value, _l, _det, _s, disabled = current_options[index]
+                if disabled:
+                    # Item is blocked/disabled, don't allow toggle
+                    continue
+                
                 if value in selected:
                     selected.remove(value)
+                    if toggle_map and value in toggle_map:
+                        for member in toggle_map[value]:
+                            selected.discard(member)
                 else:
                     selected.add(value)
+                    if toggle_map and value in toggle_map:
+                        for member in toggle_map[value]:
+                            selected.add(member)
             elif key in {"done", "enter"}:
                 self._remember_cursor("checkbox", title, option_values, index)
-                return [value for value, _label, _detail, _secondary in normalized_options if value in selected]
+                return [v for v, _l, _det, _s, _dis in current_options if v in selected]
             elif key == "force_quit":
                 if self._maybe_force_quit():
                     raise KeyboardInterrupt
@@ -828,7 +972,7 @@ class WizardUI:
             row += 2
             self.draw_choice_rows(
                 row,
-                [("yes", "Yes", index == 0, ""), ("no", "No", index == 1, "")],
+                [("yes", "Yes", index == 0, "", False), ("no", "No", index == 1, "", False)],
                 selected_index=index,
                 mode="radio",
             )
@@ -887,12 +1031,21 @@ class WizardUI:
                     _safe_addstr(self.stdscr, row, 4, text, attr)
                 row += 1
 
+            has_critical = any("[CRITICAL]" in w for w in warnings)
+            choices = [
+                ("yes", "Apply Now", "Install selected components."),
+                ("no", "Go Back", "Return to configuration.")
+            ]
+            
+            # Recalculate 'selected' boolean based on current index
+            choices_rendered = [(cid, clabel, i == index, cdesc, False) for i, (cid, clabel, cdesc) in enumerate(choices)]
+
             row += 1
             _safe_addstr(self.stdscr, row, 2, "Proceed?", self.palette["prompt"])
             row += 2
             self.draw_choice_rows(
                 row,
-                [("yes", "Apply Now", index == 0, ""), ("no", "Go Back", index == 1, "")],
+                choices_rendered,
                 selected_index=index,
                 mode="radio",
             )
@@ -901,10 +1054,10 @@ class WizardUI:
 
             key = self.read_key()
             if key == "up":
-                index = (index - 1) % 2
+                index = (index - 1) % len(choices)
                 continue
             if key == "down":
-                index = (index + 1) % 2
+                index = (index + 1) % len(choices)
                 continue
             if key == "yes":
                 return True
@@ -914,6 +1067,14 @@ class WizardUI:
                 continue
             if key in {"back", "left"}:
                 return BACK
+            if key in {"enter", "right", "space"}:
+                selected_id = choices[index][0]
+                if selected_id == "yes": return True
+                if selected_id == "no": return False
+                if selected_id == "swap": return "swap"
+            if key == "force_quit":
+                if self._maybe_force_quit():
+                    raise KeyboardInterrupt
             if key in {"enter", "right"}:
                 return index == 0
             if key == "force_quit":

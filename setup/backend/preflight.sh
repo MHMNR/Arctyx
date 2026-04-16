@@ -47,6 +47,30 @@ backend_preflight_validate() {
   if ! backend_has_network; then
     warn "Preflight: network connectivity check failed. Package downloads may fail during apply."
   fi
+
+  # Dynamic Conflict Probing Engine
+  if command -v resolve_arch_plan >/dev/null 2>&1; then
+    # Building the plan to get the full list of missing packages
+    resolve_arch_plan >/dev/null 2>&1 || true
+    
+    local -a pkgs_to_check=()
+    # shellcheck disable=SC2206
+    [[ -n "$ARCH_PACMAN_PKGS_RESOLVED" ]] && pkgs_to_check=($ARCH_PACMAN_PKGS_RESOLVED)
+    
+    if [[ ${#pkgs_to_check[@]} -gt 0 ]]; then
+      local stderr
+      stderr=$(pacman -Sw --noconfirm --needed "${pkgs_to_check[@]}" 2>&1 > /dev/null || true)
+      
+      if [[ -n "$stderr" && "$stderr" == *"conflict"* ]]; then
+        local conflicts
+        conflicts=$(echo "$stderr" | grep "are in conflict" | sed 's/:: //g' | tr '\n' ' ' | sed 's/  */ /g')
+        
+        warn "Preflight: Package conflicts detected: $conflicts. Automatic resolution will be attempted during installation."
+      fi
+    fi
+  else
+    warn "Preflight: resolve_arch_plan unavailable. Falling back to basic validation."
+  fi
 }
 
 backend_preflight_autofix() {

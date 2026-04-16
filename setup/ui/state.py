@@ -33,6 +33,120 @@ AUR_HELPER_CHOICES = [
     ("skip", "Skip", "Do not install an AUR helper; AUR packages will stay unmanaged unless you add one later."),
 ]
 
+# Known conflicting desktop environment groups (IDs from DESKTOP_CHOICES)
+# These cannot typically coexist in a single pacman transaction due to binary or dependency conflicts.
+DE_CONFLICT_GROUPS = [
+    {"plasma", "deepin"},  # Conflicts on kwin / deepin-kwin
+    {"gnome", "pantheon"},  # Frequently conflict on gnome-session/settings-daemon versions
+    {"budgie", "pantheon"}, # Version mismatch on mutter (mutter vs mutter46)
+]
+
+MIRROR_REGION_CHOICES = [
+    ("auto", "Auto select the fastest mirror", "Use Reflector with the Arch Wiki fastest-mirror method.\nReflector flags: --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist"),
+    # South Asia
+    ("region:south_asia", "--- [ South Asia ] ---", "Select all countries in South Asia"),
+    ("Bangladesh", "  Bangladesh", "South Asia"),
+    ("India", "  India", "South Asia"),
+    ("Pakistan", "  Pakistan", "South Asia"),
+    # Southeast Asia
+    ("region:southeast_asia", "--- [ Southeast Asia ] ---", "Select all countries in Southeast Asia"),
+    ("Singapore", "  Singapore", "Southeast Asia"),
+    ("Indonesia", "  Indonesia", "Southeast Asia"),
+    ("Thailand", "  Thailand", "Southeast Asia"),
+    ("Vietnam", "  Vietnam", "Southeast Asia"),
+    ("Malaysia", "  Malaysia", "Southeast Asia"),
+    ("Philippines", "  Philippines", "Southeast Asia"),
+    # East Asia
+    ("region:east_asia", "--- [ East Asia ] ---", "Select all countries in East Asia"),
+    ("Japan", "  Japan", "East Asia"),
+    ("South Korea", "  South Korea", "East Asia"),
+    ("Taiwan", "  Taiwan", "East Asia"),
+    ("Hong Kong", "  Hong Kong", "East Asia"),
+    # Middle East
+    ("region:middle_east", "--- [ Middle East ] ---", "Select all countries in Middle East"),
+    ("Israel", "  Israel", "Middle East"),
+    ("Turkey", "  Turkey", "Middle East"),
+    # Oceania
+    ("region:oceania", "--- [ Oceania ] ---", "Select all countries in Oceania"),
+    ("Australia", "  Australia", "Oceania"),
+    ("New Zealand", "  New Zealand", "Oceania"),
+    # Western Europe
+    ("region:western_europe", "--- [ Western Europe ] ---", "Select all countries in Western Europe"),
+    ("France", "  France", "Western Europe"),
+    ("Germany", "  Germany", "Western Europe"),
+    ("Netherlands", "  Netherlands", "Western Europe"),
+    ("Belgium", "  Belgium", "Western Europe"),
+    ("Luxembourg", "  Luxembourg", "Western Europe"),
+    ("Austria", "  Austria", "Western Europe"),
+    ("Switzerland", "  Switzerland", "Western Europe"),
+    # Northern Europe
+    ("region:northern_europe", "--- [ Northern Europe ] ---", "Select all countries in Northern Europe"),
+    ("United Kingdom", "  United Kingdom", "Northern Europe"),
+    ("Denmark", "  Denmark", "Northern Europe"),
+    ("Sweden", "  Sweden", "Northern Europe"),
+    ("Norway", "  Norway", "Northern Europe"),
+    ("Finland", "  Finland", "Northern Europe"),
+    ("Iceland", "  Iceland", "Northern Europe"),
+    ("Ireland", "  Ireland", "Northern Europe"),
+    # Southern Europe
+    ("region:southern_europe", "--- [ Southern Europe ] ---", "Select all countries in Southern Europe"),
+    ("Spain", "  Spain", "Southern Europe"),
+    ("Portugal", "  Portugal", "Southern Europe"),
+    ("Italy", "  Italy", "Southern Europe"),
+    ("Greece", "  Greece", "Southern Europe"),
+    # Eastern Europe
+    ("region:eastern_europe", "--- [ Eastern Europe ] ---", "Select all countries in Eastern Europe"),
+    ("Poland", "  Poland", "Eastern Europe"),
+    ("Czechia", "  Czechia", "Eastern Europe"),
+    ("Slovakia", "  Slovakia", "Eastern Europe"),
+    ("Hungary", "  Hungary", "Eastern Europe"),
+    ("Romania", "  Romania", "Eastern Europe"),
+    ("Bulgaria", "  Bulgaria", "Eastern Europe"),
+    ("Croatia", "  Croatia", "Eastern Europe"),
+    ("Serbia", "  Serbia", "Eastern Europe"),
+    ("Slovenia", "  Slovenia", "Eastern Europe"),
+    ("Ukraine", "  Ukraine", "Eastern Europe"),
+    # North America
+    ("region:north_america", "--- [ North America ] ---", "Select all countries in North America"),
+    ("United States", "  United States", "North America"),
+    ("Canada", "  Canada", "North America"),
+    # Central America
+    ("region:central_america", "--- [ Central America ] ---", "Select all countries in Central America"),
+    ("Mexico", "  Mexico", "Central America"),
+    ("Costa Rica", "  Costa Rica", "Central America"),
+    ("Puerto Rico", "  Puerto Rico", "Central America"),
+    # South America
+    ("region:south_america", "--- [ South America ] ---", "Select all countries in South America"),
+    ("Brazil", "  Brazil", "South America"),
+    ("Argentina", "  Argentina", "South America"),
+    ("Chile", "  Chile", "South America"),
+    ("Colombia", "  Colombia", "South America"),
+    ("Ecuador", "  Ecuador", "South America"),
+    ("Paraguay", "  Paraguay", "South America"),
+    ("Peru", "  Peru", "South America"),
+    ("Uruguay", "  Uruguay", "South America"),
+    # Africa
+    ("region:africa", "--- [ Africa ] ---", "Select all countries in Africa"),
+    ("South Africa", "  South Africa", "Africa"),
+    ("Kenya", "  Kenya", "Africa"),
+]
+
+MIRROR_COUNTRY_MAP: dict[str, list[str]] = {
+    "region:south_asia": ["Bangladesh", "India", "Pakistan"],
+    "region:southeast_asia": ["Singapore", "Indonesia", "Thailand", "Vietnam", "Malaysia", "Philippines"],
+    "region:east_asia": ["Japan", "South Korea", "Taiwan", "Hong Kong"],
+    "region:middle_east": ["Israel", "Turkey"],
+    "region:oceania": ["Australia", "New Zealand"],
+    "region:western_europe": ["France", "Germany", "Netherlands", "Belgium", "Luxembourg", "Austria", "Switzerland"],
+    "region:northern_europe": ["United Kingdom", "Denmark", "Sweden", "Norway", "Finland", "Iceland", "Ireland"],
+    "region:southern_europe": ["Spain", "Portugal", "Italy", "Greece"],
+    "region:eastern_europe": ["Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Croatia", "Serbia", "Slovenia", "Ukraine"],
+    "region:north_america": ["United States", "Canada"],
+    "region:central_america": ["Mexico", "Costa Rica", "Puerto Rico"],
+    "region:south_america": ["Brazil", "Argentina", "Chile", "Colombia", "Ecuador", "Paraguay", "Peru", "Uruguay"],
+    "region:africa": ["South Africa", "Kenya"],
+}
+
 APP_CATEGORIES: dict[str, dict[str, Any]] = {
     "file_managers": {
         "label": "File Managers",
@@ -685,6 +799,18 @@ def _bool_label(value: bool) -> str:
     return "Yes" if value else "No"
 
 
+def mirror_region_label(choice: str) -> str:
+    return choice_label(choice, MIRROR_REGION_CHOICES)
+
+
+def mirror_selection_summary(enabled: bool, regions: list[str]) -> str:
+    if not enabled:
+        return "Off"
+    if not regions or "auto" in regions:
+        return "Auto Fastest"
+    return ", ".join(mirror_region_label(item) for item in regions)
+
+
 @dataclass
 class WizardState:
     current_user: str = field(default_factory=detect_current_user)
@@ -694,6 +820,7 @@ class WizardState:
     shell_choice: str = "bash"
     package_categories: list[str] = field(default_factory=lambda: ["core-system", "cli-utils"])
     optimize_mirrors: bool = False
+    mirror_regions: list[str] = field(default_factory=list)
     enable_multilib: bool = False
     enable_chaotic_aur: bool = False
     aur_helper: str = "skip"
@@ -775,6 +902,7 @@ class WizardState:
             shell_choice=shell_choice,
             package_categories=list(packages.get("categories", ["core-system", "cli-utils"])),
             optimize_mirrors=bool(packages.get("optimize_mirrors", False)),
+            mirror_regions=list(packages.get("mirror_regions", [])),
             enable_multilib=bool(packages.get("multilib", False)),
             enable_chaotic_aur=bool(packages.get("chaotic_aur", False)),
             aur_helper=packages.get("aur_helper", "skip"),
@@ -832,6 +960,12 @@ class WizardState:
         state["packages"]["categories"] = list(self.package_categories)
         state["packages"]["shell_choice"] = self.shell_choice
         state["packages"]["optimize_mirrors"] = self.optimize_mirrors
+        if not self.optimize_mirrors:
+            state["packages"]["mirror_regions"] = []
+        elif not self.mirror_regions or "auto" in self.mirror_regions:
+            state["packages"]["mirror_regions"] = ["auto"]
+        else:
+            state["packages"]["mirror_regions"] = list(self.mirror_regions)
         state["packages"]["multilib"] = self.enable_multilib
         state["packages"]["chaotic_aur"] = self.enable_chaotic_aur
         state["packages"]["aur_helper"] = self.aur_helper
@@ -913,7 +1047,7 @@ class WizardState:
             f"User: {self.target_user}",
             f"Shell: {shell_label(self.shell_choice)} | AUR: {aur_helper_label(self.aur_helper)}",
             f"Packages: {', '.join(package_labels) if package_labels else 'None'}",
-            f"Package Repos: Multilib={_bool_label(self.enable_multilib)} | Chaotic AUR={_bool_label(self.enable_chaotic_aur)} | Mirror Optimize={_bool_label(self.optimize_mirrors)}",
+            f"Package Repos: Multilib={_bool_label(self.enable_multilib)} | Chaotic AUR={_bool_label(self.enable_chaotic_aur)} | Mirrors={mirror_selection_summary(self.optimize_mirrors, self.mirror_regions)}",
             f"Apps: {', '.join(apps) if apps else 'None'}",
             f"Desktop: {', '.join(desktop_labels) if desktop_labels else 'None'} ({desktop_profile_label(self.desktop_profile)})",
             f"Login: {login_method_label(self.login_method)} | DM: {display_manager_label(self.display_manager)} | TTY: {self.tty_device}",

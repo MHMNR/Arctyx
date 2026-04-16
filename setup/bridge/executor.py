@@ -105,13 +105,17 @@ class BackendExecutor:
         if self.state_path is None:
             self.state_path = default_state_path()
 
-    def run(self, action: str = "apply", check: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(self, action: str = "apply", check: bool = True, env_vars: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         assert self.state_path is not None
+        env = os.environ.copy()
+        if env_vars:
+            env.update(env_vars)
         return subprocess.run(
             ["bash", str(self.engine_path), str(self.state_path), action],
             text=True,
             capture_output=False,
             check=check,
+            env=env,
         )
 
 

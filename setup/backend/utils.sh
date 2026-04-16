@@ -120,6 +120,7 @@ backend_load_state() {
   ARCH_BASE_ENABLE="$(backend_json_bool_to_yesno "$(jq -r '.packages.base_enable // false' "$STATE_FILE")")"
   ARCH_BASE_PRESET="base-cli"
   ARCH_OPTIMIZE_MIRRORS="$(backend_json_bool_to_yesno "$(jq -r '.packages.optimize_mirrors // false' "$STATE_FILE")")"
+  ARCH_MIRROR_REGIONS="$(backend_json_array_to_words '.packages.mirror_regions // []')"
   ARCH_SELECTED_CATEGORIES="$(backend_json_array_to_words '.packages.categories // []')"
   ARCH_SELECTED_IDES="$(backend_json_array_to_words '.apps.ides // []')"
   ARCH_SELECTED_APPS="$(backend_json_array_to_words '.apps.selected // []')"

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from setup.ui.state import WizardState, desktop_label
+from setup.ui.state import DE_CONFLICT_GROUPS, WizardState, desktop_label
 
 
 # BUG #36: Detect kernel-bundled NVIDIA packages (CachyOS, XanMod, Liquorix, etc.)
@@ -239,6 +239,52 @@ def build_review_report(state: WizardState) -> ReviewReport:
     if any(session in state.desktop_sessions for session in {"hyprland", "sway", "river", "niri"}) and state.login_method == "display-manager" and state.display_manager == "none":
         recommendations.append("For Wayland compositors, either choose a display manager explicitly or keep TTY Autologin for a lighter setup.")
 
+    # Detect Incompatible Desktop Selections (Inside Selection)
+    for conflict_group in DE_CONFLICT_GROUPS:
+        intersection = conflict_group.intersection(set(state.desktop_sessions))
+        if len(intersection) > 1:
+            conflicting_names = [desktop_label(id) for id in intersection]
+            warnings.append(
+                f"[CRITICAL] Conflict detected between {', '.join(conflicting_names)}. "
+                "These environments share conflicting packages (e.g., kwin vs deepin-kwin) "
+                "and cannot be installed together in the same transaction."
+            )
+
+    # Detect Conflicts with Already Installed Packages
+    installed_mutter = _detect_installed_mutter_variant()
+    installed_kwin = _detect_installed_kwin_variant()
+    
+    mutter_deps = {"budgie", "gnome", "pantheon"}
+    kwin_deps = {"plasma", "deepin"}
+    
+    if installed_mutter and any(s in mutter_deps for s in state.desktop_sessions):
+         # If we are selecting a mutter-based DE but already have a mutter variant
+         # Actually, GNOME/Budgie usually use standard mutter, but Pantheon uses mutter46
+         # The backend uses a regex ^mutter([0-9]+)? to find ALL variants.
+         # For simplicity: if a mutter variant exists and we are installing any mutter-based DE, 
+         # it's a critical swap candidate if it's not the exact same package (but pacman usually handles same version)
+         # In our case, the user reported mutter vs mutter46 conflict.
+         if "pantheon" in state.desktop_sessions or installed_mutter.startswith("mutter"):
+             # We flag if Pantheon is selected OR if a variant is present.
+             # This is a bit broad, but ensures "Fix & Swap" appears when a swap is likely needed.
+             warnings.append(
+                 f"[CRITICAL] Pre-existing Mutter variant detected: {installed_mutter}. "
+                 "Selection requires a window manager transition; conflicts will be resolved automatically."
+             )
+    
+    if installed_kwin and any(s in kwin_deps for s in state.desktop_sessions):
+         warnings.append(
+             f"[CRITICAL] Pre-existing KWin variant detected: {installed_kwin}. "
+             "Selected environment requires a windows manager transition; conflicts will be resolved automatically."
+         )
+
+    # Dynamic Transaction Probe
+    planned_pkgs = _get_planned_packages(state)
+    dynamic_conflicts = _probe_transaction_conflicts(planned_pkgs)
+    for conf in dynamic_conflicts:
+        warnings.append(f"[CRITICAL] Package conflict detected: {conf}. Arctyx will resolve this automatically during apply.")
+
+
     if state.bootloader_action == "replace" and state.bootloader_choice == "grub" and state.boot_os_prober_action == "off":
         recommendations.append("If you dual-boot with Windows or another OS, enabling OS-Prober with GRUB is usually the safer choice.")
     if state.bootloader_action == "keep" and state.boot_os_prober_action == "on" and not os_prober_available:
@@ -272,7 +318,95 @@ def build_review_report(state: WizardState) -> ReviewReport:
         ready = False
     if any("DKMS-style driver packages are selected" in warning for warning in warnings):
         ready = False
+    if any("cannot be installed together" in warning for warning in warnings):
+        ready = False
 
     report = ReviewReport(ready=ready, validations=validations, warnings=warnings, recommendations=recommendations)
     _REVIEW_CACHE[signature] = (now, report)
     return report
+
+def _get_planned_packages(state: WizardState) -> list[str]:
+    """Mirror the setup.sh package mapping logic for conflict probing."""
+    pkgs = []
+    # Desktop Sessions
+    profile = state.desktop_profile
+    for de in state.desktop_sessions:
+        if de == "hyprland": pkgs.extend(["hyprland", "xdg-desktop-portal-hyprland", "waybar"])
+        elif de == "sway": pkgs.extend(["sway", "waybar", "swaylock", "swayidle", "swaybg"])
+        elif de == "river": pkgs.append("river")
+        elif de == "plasma": pkgs.append("plasma-meta" if profile == "full" else "plasma-desktop")
+        elif de == "gnome": pkgs.append("gnome" if profile == "full" else "gnome-shell")
+        elif de == "xfce": pkgs.extend(["xfce4", "xfce4-goodies"] if profile == "full" else ["xfce4"])
+        elif de == "cinnamon": pkgs.append("cinnamon")
+        elif de == "mate": pkgs.extend(["mate", "mate-extra"] if profile == "full" else ["mate"])
+        elif de == "lxqt": pkgs.append("lxqt")
+        elif de == "budgie": pkgs.append("budgie-desktop")
+        elif de == "deepin": pkgs.append("deepin")
+        elif de == "pantheon": pkgs.extend(["pantheon-session", "gala", "wingpanel"])
+        elif de == "i3": pkgs.extend(["i3-wm", "i3status", "i3lock", "dmenu"])
+        # ... add more as needed, or keep it minimal just for conflict detection
+    
+    # Display Managers
+    if state.login_method == "display-manager" and state.display_manager != "none":
+        pkgs.append(state.display_manager)
+    
+    # Drivers
+    pkgs.extend(state.driver_packages)
+    
+    # Apps
+    pkgs.extend(state.selected_apps)
+    
+    return list(set(pkgs))
+
+def _probe_transaction_conflicts(packages: list[str]) -> list[str]:
+    """Use pacman -Sp to detect conflicts without root privileges."""
+    if not packages:
+        return []
+    
+    try:
+        # We run pacman -Sp --needed to simulate the transaction.
+        # This usually works without root if the local DB is present.
+        cmd = ["pacman", "-Sp", "--needed"] + packages
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        
+        if proc.returncode == 0:
+            return []
+            
+        conflicts = []
+        # Pattern for: :: x and y are in conflict. Remove y? [y/N]
+        # Or: error: unresolvable package conflicts detected
+        # Or: :: pkgA-1.0 and pkgB-2.0 are in conflict
+        lines = proc.stderr.splitlines()
+        for line in lines:
+            if "are in conflict" in line:
+                match = re.search(r':: (.+) and (.+) are in conflict', line)
+                if match:
+                    pkg_new, pkg_installed = match.groups()
+                    conflicts.append(f"{pkg_new.strip()} conflicts with {pkg_installed.strip()}")
+                else:
+                    conflicts.append(line.replace("::", "").strip())
+        
+        return conflicts
+    except Exception:
+        return []
+
+def _detect_installed_mutter_variant() -> str | None:
+    """Find any installed package providing mutter functionality, including explicit variants."""
+    try:
+        # Check for any package starting with mutter or explicit mutter providers
+        cmd = "pacman -Qq | grep -E '^mutter([0-9]+)?(-.*)?$|gala|wingpanel' | head -n 1"
+        res = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+        return res if res else None
+    except subprocess.CalledProcessError:
+        return None
+
+def _detect_installed_kwin_variant() -> str | None:
+    """Find any installed package providing kwin functionality, including deepin-kwin."""
+    try:
+        # Check for any package containing kwin or explicit kwin providers
+        cmd = "pacman -Qq | grep -E 'kwin' | head -n 1"
+        res = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+        return res if res else None
+    except subprocess.CalledProcessError:
+        return None
+

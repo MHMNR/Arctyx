@@ -67,6 +67,7 @@ ARCH_INSTALL_ZSH="no"
 ARCH_INSTALL_OH_MY_ZSH="no"
 ARCH_SHELL_CHOICE="bash"
 ARCH_OPTIMIZE_MIRRORS="no"
+ARCH_MIRROR_REGIONS=""
 ARCH_PACMAN_PKGS_RESOLVED=""
 ARCH_PACMAN_PKGS_MISSING=""
 ARCH_AUR_PKGS_RESOLVED=""
@@ -623,11 +624,10 @@ startup_install_missing_dependencies() {
   startup_wait_for_network || return 1
 
   log_file="/tmp/arctyx-deps-install.$$.$RANDOM.log"
-  : > "$log_file"
-
+  log "Installing bootstrap keyrings: ${missing[*]}"
   (
-    pacman -Syy --noconfirm &&
-    pacman -S --needed --noconfirm "${missing[@]}"
+    pacman -Syy --noconfirm --ask=4 && \
+    pacman -S --needed --noconfirm --ask=4 "${missing[@]}"
   ) >"$log_file" 2>&1 &
   spinner_pid=$!
 
@@ -1207,7 +1207,8 @@ ensure_pacman_db_ready() {
     return 0
   fi
   warn "Pacman sync database not found. Refreshing pacman databases safely before install."
-  pacman -Syy --noconfirm || {
+  log "Synchronizing package databases..."
+  pacman -Syy --noconfirm --ask=4 || {
     err "Failed to initialize pacman sync database."
     return 1
   }
@@ -1339,7 +1340,7 @@ ensure_os_prober_installed() {
 
   warn "os-prober not found. Installing os-prober..."
   ensure_pacman_db_ready || return 1
-  if ! pacman -S --needed --noconfirm os-prober; then
+  if ! pacman -S --needed --noconfirm --ask=4 os-prober; then
     warn "Failed to install os-prober."
     return 1
   fi
@@ -1355,7 +1356,7 @@ ensure_os_prober_prereqs() {
   ensure_pacman_db_ready || return 1
   # ntfs-3g helps os-prober inspect common Windows NTFS volumes.
   # dosfstools/util-linux aid partition probing workflows on some systems.
-  if ! pacman -S --needed --noconfirm ntfs-3g dosfstools util-linux >/dev/null 2>&1; then
+  if ! pacman -S --needed --noconfirm --ask=4 ntfs-3g dosfstools util-linux >/dev/null 2>&1; then
     warn "Failed to install one or more os-prober prerequisite packages (ntfs-3g/dosfstools/util-linux)."
     return 1
   fi
@@ -1401,7 +1402,7 @@ detect_environment() {
     DETECTED_XFCE="yes"
   fi
 
-  for dm in gdm sddm lightdm; do
+  for dm in gdm sddm lightdm ly; do
     if systemctl is-enabled "$dm" >/dev/null 2>&1 || systemctl is-active "$dm" >/dev/null 2>&1; then
       DETECTED_DM="$dm"
       break
@@ -1464,136 +1465,153 @@ category_packages() {
   esac
 }
 
+# Expands a list of pacman packages/groups into a flat list of individual packages
+group_to_packages() {
+  local pkgs=("$@")
+  [[ ${#pkgs[@]} -eq 0 ]] && return 0
+  
+  # Use pacman -Sp --print-format %n to expand everything (groups AND metapackages)
+  # This provides a 100% granular package list.
+  local expanded
+  expanded=$(pacman -Sp --needed --print-format %n "${pkgs[@]}" 2>/dev/null || echo "${pkgs[*]}")
+  echo "$expanded" | tr '\n' ' ' | sed 's/  */ /g' | xargs
+}
+
 de_packages() {
   local session="${1:-none}"
   local profile="${2:-core}"
+  local pkgs=""
   case "$session:$profile" in
     # ── Hyprland ──────────────────────────────────────────────────────────────
     # Wiki: hyprland, xdg-desktop-portal-hyprland, polkit MANDATORY, xdg-desktop-portal-gtk for fallback
     # hyprpolkitagent = native Wayland polkit agent; mako = notification daemon
-    hyprland:core) echo "hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland qt6-wayland egl-wayland polkit" ;;
-    hyprland:full) echo "hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland qt6-wayland egl-wayland polkit hyprpolkitagent mako waybar wofi kitty sddm" ;;
+    hyprland:core) pkgs="hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland qt6-wayland egl-wayland polkit" ;;
+    hyprland:full) pkgs="hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland qt6-wayland egl-wayland polkit hyprpolkitagent mako waybar wofi kitty sddm" ;;
 
     # ── Sway ──────────────────────────────────────────────────────────────────
     # Wiki: sway + polkit + swaylock/swayidle/swaybg (explicitly recommended)
     # mako = notification daemon; foot = default terminal per wiki
-    sway:core) echo "sway xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
-    sway:full) echo "sway xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit swaylock swayidle swaybg mako waybar wofi foot sddm" ;;
+    sway:core) pkgs="sway xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    sway:full) pkgs="sway xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit swaylock swayidle swaybg mako waybar wofi foot sddm" ;;
 
     # ── River ─────────────────────────────────────────────────────────────────
     # Wiki: very minimal — just river; polkit needed for privilege actions
-    river:core) echo "river xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
-    river:full) echo "river xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit waybar wofi foot sddm" ;;
+    river:core) pkgs="river xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    river:full) pkgs="river xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit waybar wofi foot sddm" ;;
 
     # ── Wayfire ───────────────────────────────────────────────────────────────
     # No dedicated wiki page; polkit needed; wf-shell = Wayfire panel; wcm = config manager
-    wayfire:core) echo "wayfire xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
-    wayfire:full) echo "wayfire wayfire-plugins-extra xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit wf-shell wcm foot sddm" ;;
+    wayfire:core) pkgs="wayfire xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    wayfire:full) pkgs="wayfire wayfire-plugins-extra xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit wf-shell wcm foot sddm" ;;
 
     # ── Labwc ─────────────────────────────────────────────────────────────────
     # wlroots-based; polkit needed
-    labwc:core) echo "labwc xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
-    labwc:full) echo "labwc xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit waybar wofi foot sddm" ;;
+    labwc:core) pkgs="labwc xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit" ;;
+    labwc:full) pkgs="labwc xdg-desktop-portal-wlr xorg-xwayland qt6-wayland polkit waybar wofi foot sddm" ;;
 
     # ── Niri ──────────────────────────────────────────────────────────────────
     # Wiki: niri + fuzzel (default launcher), mako (notifications), waybar,
     #       xdg-desktop-portal-gtk + xdg-desktop-portal-gnome (screen sharing),
     #       xwayland-satellite (NOT plain xwayland — niri-specific XWayland compat),
     #       swayidle + swaylock (idle/lock), swaybg (wallpaper)
-    niri:core) echo "niri xdg-desktop-portal-gnome xdg-desktop-portal-gtk xwayland-satellite qt6-wayland polkit" ;;
-    niri:full) echo "niri xdg-desktop-portal-gnome xdg-desktop-portal-gtk xwayland-satellite qt6-wayland polkit mako swaybg swayidle swaylock waybar fuzzel foot sddm" ;;
+    niri:core) pkgs="niri xdg-desktop-portal-gnome xdg-desktop-portal-gtk xwayland-satellite qt6-wayland polkit" ;;
+    niri:full) pkgs="niri xdg-desktop-portal-gnome xdg-desktop-portal-gtk xwayland-satellite qt6-wayland polkit mako swaybg swayidle swaylock waybar fuzzel foot sddm" ;;
 
     # ── Plasma (KDE) ──────────────────────────────────────────────────────────
     # Wiki: plasma-desktop (minimal) or plasma-meta (full)
     # Core needs: plasma-pa (volume), kscreen (display), powerdevil (power),
     #             plasma-nm + NetworkManager (network applet), bluedevil (BT)
     # Full needs: sddm + sddm-kcm (DM config), kde-gtk-config + breeze-gtk (GTK theming)
-    plasma:core) echo "plasma-desktop plasma-pa kscreen powerdevil plasma-nm bluedevil" ;;
-    plasma:full) echo "plasma-meta sddm sddm-kcm kde-gtk-config breeze-gtk konsole dolphin" ;;
+    plasma:core) pkgs="plasma-desktop plasma-pa kscreen powerdevil plasma-nm bluedevil" ;;
+    plasma:full) pkgs="plasma-meta sddm sddm-kcm kde-gtk-config breeze-gtk konsole dolphin" ;;
 
     # ── GNOME ─────────────────────────────────────────────────────────────────
     # Wiki: gnome-shell (minimal) or gnome (full group)
     # Core needs: gnome-control-center (settings), nautilus (file manager),
     #             xdg-desktop-portal-gnome (screen capture/share)
     # Full: use 'gnome' group which includes everything + gdm
-    gnome:core) echo "gnome-shell gnome-session gnome-control-center nautilus xdg-desktop-portal-gnome" ;;
-    gnome:full) echo "gnome gdm" ;;
+    gnome:core) pkgs="gnome-shell gnome-session gnome-control-center nautilus xdg-desktop-portal-gnome" ;;
+    gnome:full) pkgs="gnome gdm" ;;
 
     # ── XFCE ──────────────────────────────────────────────────────────────────
     # Wiki: xfce4 (group, already includes xfce4-session) + xfce4-goodies (extras)
     # Core needs: gvfs (USB/network drive auto-mount), polkit-gnome (privilege agent),
     #             tumbler (thumbnail generation for Thunar)
-    xfce:core) echo "xfce4 gvfs polkit-gnome tumbler" ;;
-    xfce:full) echo "xfce4 xfce4-goodies gvfs polkit-gnome tumbler network-manager-applet lightdm lightdm-gtk-greeter" ;;
+    xfce:core) pkgs="xfce4 gvfs polkit-gnome tumbler" ;;
+    xfce:full) pkgs="xfce4 xfce4-goodies gvfs polkit-gnome tumbler network-manager-applet lightdm lightdm-gtk-greeter" ;;
 
     # ── Cinnamon ──────────────────────────────────────────────────────────────
     # Wiki: cinnamon (group). gnome-keyring needed for keyring/secrets.
     # polkit-gnome for privilege elevation; network-manager-applet for tray
-    cinnamon:core) echo "cinnamon gnome-keyring" ;;
-    cinnamon:full) echo "cinnamon gnome-keyring network-manager-applet lightdm lightdm-gtk-greeter" ;;
+    cinnamon:core) pkgs="cinnamon gnome-keyring" ;;
+    cinnamon:full) pkgs="cinnamon gnome-keyring network-manager-applet lightdm lightdm-gtk-greeter" ;;
 
     # ── MATE ──────────────────────────────────────────────────────────────────
     # Wiki: mate (group) + mate-extra. mate-polkit is in mate-extra but
     # should be in core so privilege works out-of-the-box.
     # network-manager-applet for NM tray icon
-    mate:core) echo "mate mate-polkit" ;;
-    mate:full) echo "mate mate-extra mate-polkit network-manager-applet lightdm lightdm-gtk-greeter" ;;
+    mate:core) pkgs="mate mate-polkit" ;;
+    mate:full) pkgs="mate mate-extra mate-polkit network-manager-applet lightdm lightdm-gtk-greeter" ;;
 
     # ── LXQt ──────────────────────────────────────────────────────────────────
     # Wiki: lxqt (group) + breeze-icons (REQUIRED — without icons LXQt is broken)
     # openbox is the default WM bundled with LXQt
     # network-manager-applet for connectivity tray
-    lxqt:core) echo "lxqt openbox breeze-icons" ;;
-    lxqt:full) echo "lxqt openbox breeze-icons sddm network-manager-applet" ;;
+    lxqt:core) pkgs="lxqt openbox breeze-icons" ;;
+    lxqt:full) pkgs="lxqt openbox breeze-icons sddm network-manager-applet" ;;
 
     # ── Budgie ────────────────────────────────────────────────────────────────
     # Wiki: budgie-desktop + budgie-control-center (modern Budgie settings panel)
     # gdm is the recommended DM; network-manager-applet for tray
-    budgie:core) echo "budgie-desktop budgie-control-center" ;;
-    budgie:full) echo "budgie-desktop budgie-control-center network-manager-applet gdm" ;;
+    budgie:core) pkgs="budgie-desktop budgie-control-center" ;;
+    budgie:full) pkgs="budgie-desktop budgie-control-center network-manager-applet gdm" ;;
 
     # ── Deepin ────────────────────────────────────────────────────────────────
     # Wiki: deepin (group) + deepin-extra; lightdm REQUIRED as DM;
     # lightdm-deepin-greeter is the official Deepin greeter (NOT lightdm-gtk-greeter)
-    deepin:core) echo "deepin" ;;
-    deepin:full) echo "deepin deepin-extra lightdm lightdm-deepin-greeter" ;;
+    deepin:core) pkgs="deepin" ;;
+    deepin:full) pkgs="deepin deepin-extra lightdm lightdm-deepin-greeter" ;;
 
     # ── Pantheon ──────────────────────────────────────────────────────────────
     # Not on Arch Wiki (Elementary OS DE); kept as best-effort
-    pantheon:core) echo "pantheon-session gala wingpanel" ;;
-    pantheon:full) echo "pantheon-session gala wingpanel lightdm lightdm-pantheon-greeter" ;;
+    pantheon:core) pkgs="pantheon-session gala wingpanel" ;;
+    pantheon:full) pkgs="pantheon-session gala wingpanel lightdm lightdm-pantheon-greeter" ;;
 
     # ── i3 ────────────────────────────────────────────────────────────────────
     # Wiki: i3-wm, i3status, i3lock, dmenu. polkit explicitly required.
     # dunst = notification daemon (needed for any notif to appear)
     # xterm = default terminal referenced in i3 config (without it →bar/exec fail)
-    i3:core) echo "i3-wm i3status i3lock dmenu polkit dunst xterm xorg-server xorg-xinit" ;;
-    i3:full) echo "i3-wm i3status i3lock dmenu polkit dunst xterm picom feh rofi xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+    i3:core) pkgs="i3-wm i3status i3lock dmenu polkit dunst xterm xorg-server xorg-xinit" ;;
+    i3:full) pkgs="i3-wm i3status i3lock dmenu polkit dunst xterm picom feh rofi xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
 
     # ── bspwm ─────────────────────────────────────────────────────────────────
     # Wiki: bspwm + sxhkd. Default sxhkdrc uses xterm as terminal.
     # polkit + dunst needed for privilege and notifications
-    bspwm:core) echo "bspwm sxhkd xterm xorg-server xorg-xinit" ;;
-    bspwm:full) echo "bspwm sxhkd xterm polkit dunst polybar rofi picom xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+    bspwm:core) pkgs="bspwm sxhkd xterm xorg-server xorg-xinit" ;;
+    bspwm:full) pkgs="bspwm sxhkd xterm polkit dunst polybar rofi picom xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
 
     # ── Awesome ───────────────────────────────────────────────────────────────
     # Wiki: awesome. Default rc.lua uses xterm as terminal.
     # polkit + dunst needed for privilege and notifications
-    awesome:core) echo "awesome xterm xorg-server xorg-xinit" ;;
-    awesome:full) echo "awesome xterm polkit dunst rofi picom xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+    awesome:core) pkgs="awesome xterm xorg-server xorg-xinit" ;;
+    awesome:full) pkgs="awesome xterm polkit dunst rofi picom xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
 
     # ── Openbox ───────────────────────────────────────────────────────────────
     # Wiki: openbox + obconf-qt (Qt config manager, wiki recommends Qt version),
     #       polkit-gnome (explicitly mentioned), python-pyxdg (XDG autostart),
     #       tint2 (taskbar), xterm (default terminal), network-manager-applet,
     #       dunst (notifications)
-    openbox:core) echo "openbox obconf-qt tint2 python-pyxdg polkit-gnome xterm xorg-server xorg-xinit" ;;
-    openbox:full) echo "openbox obconf-qt tint2 python-pyxdg polkit-gnome xterm dunst rofi picom network-manager-applet xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
+    openbox:core) pkgs="openbox obconf-qt tint2 python-pyxdg polkit-gnome xterm xorg-server xorg-xinit" ;;
+    openbox:full) pkgs="openbox obconf-qt tint2 python-pyxdg polkit-gnome xterm dunst rofi picom network-manager-applet xorg-server xorg-xinit lightdm lightdm-gtk-greeter" ;;
 
-    custom:*) echo "$ARCH_CUSTOM_DE_PKGS" ;;
-    none:*)   echo "" ;;
-    *)        echo "" ;;
+    custom:*) pkgs="$ARCH_CUSTOM_DE_PKGS" ;;
+    none:*)   pkgs="" ;;
+    *)        pkgs="" ;;
   esac
+
+  # AUTO-FLATTEN everything before returning to prevent group prompts
+  # shellcheck disable=SC2086
+  group_to_packages $pkgs
 }
 
 
@@ -1743,7 +1761,7 @@ app_to_pkg() {
     papers) echo "pacman|papers" ;;
     android-studio) echo "aur|android-studio" ;;
     virtualbox) echo "pacman|virtualbox virtualbox-host-dkms" ;;
-    virt-manager) echo "pacman|virt-manager qemu-full libvirt dnsmasq iptables-nft vde2 ubridge" ;;
+    virt-manager) echo "pacman|virt-manager qemu-desktop libvirt dnsmasq iptables-nft vde2" ;;
     *) echo "" ;;
   esac
 }
@@ -1769,10 +1787,31 @@ file_manager_support_packages() {
 optimize_pacman_mirrors_if_selected() {
   [[ "$ARCH_OPTIMIZE_MIRRORS" == "yes" ]] || return 0
   log "Optimizing pacman mirrors with reflector"
-  pacman -S --needed --noconfirm reflector \
-    || warn "reflector install failed, mirror optimization skipped"
-  reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || warn "Reflector run failed; keeping current mirrorlist."
-  pacman -Syy || warn "pacman -Syy failed after reflector."
+  pacman -S --needed --noconfirm --ask=4 reflector \
+    || { warn "reflector install failed, mirror optimization skipped"; return 0; }
+  local -a reflector_args=("--latest" "20" "--protocol" "https" "--sort" "rate")
+  local -a countries=()
+  local region country_csv
+  for region in ${ARCH_MIRROR_REGIONS:-}; do
+    [[ "$region" == "auto" ]] && continue
+    country_csv="$(mirror_region_countries "$region")"
+    if [[ -n "$country_csv" ]]; then
+      countries+=("$country_csv")
+    else
+      # If not a known region, assume it's a raw country name
+      countries+=("$region")
+    fi
+  done
+  if (( ${#countries[@]} > 0 )); then
+    local joined_countries
+    joined_countries="$(printf '%s\n' "${countries[@]}" | paste -sd ',' -)"
+    reflector_args+=("--country" "$joined_countries")
+    log "Filtering reflector mirrors by selected regions: ${ARCH_MIRROR_REGIONS}"
+  else
+    log "Using automatic fastest-mirror selection."
+  fi
+  reflector "${reflector_args[@]}" --save /etc/pacman.d/mirrorlist || warn "Reflector run failed; keeping current mirrorlist."
+  pacman -Syy --ask=4 || warn "pacman -Syy failed after reflector."
 }
 
 enable_repo_block() {
@@ -1847,7 +1886,7 @@ enable_selected_repositories_if_needed() {
 
   if [[ "$changed" == "yes" ]]; then
     log "Refreshing package database after repository changes"
-    pacman -Syy || warn "pacman -Syy failed after repository updates."
+    pacman -Syy --ask=4 || warn "pacman -Syy failed after repository updates."
   fi
 }
 
@@ -1860,11 +1899,11 @@ enable_chaotic_aur_if_selected() {
   fi
 
   log "Enabling Chaotic AUR repository"
-  pacman -S --needed --noconfirm gnupg archlinux-keyring curl \
+  pacman -S --needed --noconfirm --ask=4 gnupg archlinux-keyring curl \
     || { err "Failed to install keyring dependencies."; return 1; }
   pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
   pacman-key --lsign-key 3056513887B78AEB
-  pacman -U --noconfirm \
+  pacman -U --noconfirm --ask=4 \
     'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
     'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
 
@@ -1874,10 +1913,12 @@ enable_chaotic_aur_if_selected() {
 Include = /etc/pacman.d/chaotic-mirrorlist
 EOF
 
-  pacman -Syy
+  pacman -Syy --ask=4
 }
 
 resolve_arch_plan() {
+  # Aggregating all packages into a global array for unified probing
+  ARCH_TOTAL_PACMAN_PKGS=()
   local pacman_pkgs=()
   local aur_pkgs=()
   local cat pkg ide mapped src name
@@ -1952,8 +1993,16 @@ resolve_arch_plan() {
     aur_pkgs+=("${custom_aur_pkgs[@]}")
   fi
 
-  for pkg in $(de_packages "$ARCH_SELECTED_DE"); do
-    [[ -n "$pkg" ]] && pacman_pkgs+=("$pkg")
+  for pkg in $(de_packages "$ARCH_SELECTED_DE" "$DEWM_INSTALL_MODE"); do
+    [[ -n "$pkg" ]] && pacman_pkgs+=( $pkg )
+  done
+
+  # MODULAR DE SELECTION (DEWM_SELECTED)
+  local s
+  for s in $DEWM_SELECTED; do
+    for pkg in $(de_packages "$s" "$DEWM_INSTALL_MODE"); do
+      [[ -n "$pkg" ]] && pacman_pkgs+=( $pkg )
+    done
   done
 
   local -A seen=()
@@ -1988,6 +2037,9 @@ resolve_arch_plan() {
   ARCH_AUR_PKGS_RESOLVED="${uniq_aur[*]}"
   ARCH_PACMAN_PKGS_MISSING="${missing_pac[*]}"
   ARCH_AUR_PKGS_MISSING="${missing_aur[*]}"
+  
+  # Export the full unified list for global probing
+  ARCH_TOTAL_PACMAN_PKGS=("${uniq_pac[@]}")
 }
 
 run_as_target_user() {
@@ -2038,11 +2090,11 @@ install_aur_helper() {
   local repo_url="https://aur.archlinux.org/${helper}.git"
 
   log "Installing AUR helper: $helper (missing but required)"
-  pacman -S --needed --noconfirm base-devel git \
+  pacman -S --needed --noconfirm --ask=4 base-devel git \
     || { err "base-devel/git install failed. Cannot build AUR helper."; return 1; }
   if pacman -Si "$helper" >/dev/null 2>&1; then
     log "Installing AUR helper from pacman repository: $helper"
-    pacman -S --needed --noconfirm "$helper"
+    pacman -S --needed --noconfirm --ask=4 "$helper"
     return 0
   fi
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -2070,9 +2122,22 @@ install_arch_base_if_selected() {
     local -a pac_missing_pkgs=()
     # shellcheck disable=SC2206
     pac_missing_pkgs=($ARCH_PACMAN_PKGS_MISSING)
+
     log "Installing missing pacman packages from Arch base module"
-    pacman -S --needed --noconfirm "${pac_missing_pkgs[@]}" \
-      || { err "Base package installation failed: ${pac_missing_pkgs[*]}"; return 1; }
+    # SCRIPT HARDENING: Resolve conflicts before multi-package install
+    resolve_all_conflicts_dynamically "${pac_missing_pkgs[@]}"
+    
+    if ! pacman -S --needed --noconfirm --ask=4 "${pac_missing_pkgs[@]}"; then
+      warn "Batch install failed — retrying package-by-package"
+      local _failed=()
+      local _pkg
+      for _pkg in "${pac_missing_pkgs[@]}"; do
+        pacman -Si "$_pkg" >/dev/null 2>&1 \
+          && { pacman -S --needed --noconfirm --ask=4 "$_pkg" || { warn "Skipping: $_pkg"; _failed+=("$_pkg"); }; } \
+          || { warn "Not found in repos, skipping: $_pkg"; _failed+=("$_pkg"); }
+      done
+      [[ ${#_failed[@]} -gt 0 ]] && warn "Skipped packages: ${_failed[*]}"
+    fi
   else
     log "Arch base pacman packages already installed."
   fi
@@ -2107,12 +2172,72 @@ install_arch_base_if_selected() {
 
     command -v "$helper" >/dev/null 2>&1 || install_aur_helper "$helper"
     log "Installing missing AUR packages with $helper"
-    # BUG #29: Add non-interactive flags to suppress yay/paru prompts (cleanBuild, diffs)
     local -a _nointeract_flags=()
     # shellcheck disable=SC2207
     _nointeract_flags=($(aur_helper_nointeract_flags "$helper"))
     run_as_target_user_argv "$helper" -S --noconfirm --needed "${_nointeract_flags[@]+${_nointeract_flags[@]}}" "${aur_missing_pkgs[@]}"
   fi
+}
+
+resolve_all_conflicts_dynamically() {
+  export LC_ALL=C
+  export LANG=C
+  local -a pkgs=("$@")
+  [[ ${#pkgs[@]} -eq 0 ]] && return 0
+  local max_retries=15
+  local attempt=0
+  while (( attempt < max_retries )); do
+    attempt=$((attempt + 1))
+    local stderr
+    stderr=$(pacman -Sw --noconfirm --needed --ask=4 "${pkgs[@]}" 2>&1 > /dev/null || true)
+    if [[ -z "$stderr" ]] || [[ "$stderr" != *"conflict"* ]]; then
+      return 0
+    fi
+    local found_conflict=false
+    while IFS= read -r line; do
+      if [[ "$line" == *"conflict"* ]]; then
+        local p_raw1="" p_raw2="" p1 p2
+        
+        # Robust extraction using PCRE to isolate the two package names
+        # Format: :: pkg1 and pkg2 are in conflict.
+        p_raw1=$(echo "$line" | grep -oP '(?<=:: )[^ ]+(?= and )' | head -1 || true)
+        p_raw2=$(echo "$line" | grep -oP '(?<=and )[^ ]+(?= are in conflict)' | head -1 || true)
+        
+        # If the above fails, try a fallback capture
+        if [[ -z "$p_raw1" || -z "$p_raw2" ]]; then
+           p_raw1=$(echo "$line" | sed -n 's/.*:: \(.*\) and \(.*\) are in conflict.*/\1/p' | awk '{print $1}')
+           p_raw2=$(echo "$line" | sed -n 's/.*:: \(.*\) and \(.*\) are in conflict.*/\2/p' | awk '{print $1}')
+        fi
+        
+        [[ -n "$p_raw1" && -n "$p_raw2" ]] || continue
+
+        # Strip versions accurately (everything from the first hyphen followed by a digit)
+        p1=$(echo "$p_raw1" | sed 's/-[0-9].*//')
+        p2=$(echo "$p_raw2" | sed 's/-[0-9].*//')
+        
+        # Identify the installed package.
+        local installed_pkg=""
+        if pacman -Qq "$p1" &>/dev/null; then installed_pkg="$p1"
+        elif pacman -Qq "$p2" &>/dev/null; then installed_pkg="$p2"
+        elif pacman -Qi "$p_raw1" &>/dev/null; then installed_pkg="$p_raw1"
+        elif pacman -Qi "$p_raw2" &>/dev/null; then installed_pkg="$p_raw2"
+        fi
+
+        if [[ -n "$installed_pkg" ]]; then
+          warn "Dynamic Resolver: Found conflict between $p_raw1 and $p_raw2. Automatically removing $installed_pkg..."
+          pacman -Rdd --noconfirm "$installed_pkg" &>/dev/null || true
+          found_conflict=true
+        fi
+      fi
+    done <<< "$stderr"
+    
+    if [[ "$found_conflict" == "false" ]]; then
+      # If we are here, we saw 'conflict' in stderr but failed to parse/action it
+      # Just to be safe, if we're sure it's a conflict, let's log the raw line
+      warn "Dynamic Resolver: A conflict was detected but could not be automatically resolved."
+      break
+    fi
+  done
 }
 
 install_oh_my_zsh_if_selected() {
@@ -2214,6 +2339,25 @@ dedupe_word_list() {
     fi
   done
   echo "$out" | xargs
+}
+
+mirror_region_countries() {
+  case "$1" in
+    south_asia) echo "Bangladesh,India,Pakistan" ;;
+    southeast_asia) echo "Singapore,Indonesia,Thailand,Vietnam,Malaysia,Philippines" ;;
+    east_asia) echo "Japan,South Korea,Taiwan,Hong Kong" ;;
+    middle_east) echo "Israel,Turkey" ;;
+    oceania) echo "Australia,New Zealand" ;;
+    western_europe) echo "France,Germany,Netherlands,Belgium,Luxembourg,Austria,Switzerland" ;;
+    northern_europe) echo "United Kingdom,Denmark,Sweden,Norway,Finland,Iceland,Ireland" ;;
+    southern_europe) echo "Spain,Portugal,Italy,Greece" ;;
+    eastern_europe) echo "Poland,Czechia,Slovakia,Hungary,Romania,Bulgaria,Croatia,Serbia,Slovenia,Ukraine" ;;
+    north_america) echo "United States,Canada" ;;
+    central_america) echo "Mexico,Costa Rica,Puerto Rico" ;;
+    south_america) echo "Brazil,Argentina,Chile,Colombia,Ecuador,Paraguay,Peru,Uruguay" ;;
+    africa) echo "South Africa,Kenya" ;;
+    *) echo "" ;;
+  esac
 }
 
 nvidia_is_legacy_family() {
@@ -2442,7 +2586,8 @@ install_driver_configuration_if_selected() {
 
     if (( ${#final_pac_pkgs[@]} > 0 )); then
       log "Installing selected driver packages (pacman)"
-      pacman -S --needed --noconfirm "${final_pac_pkgs[@]}"
+      resolve_all_conflicts_dynamically "${final_pac_pkgs[@]}"
+      pacman -S --needed --noconfirm --ask=4 "${final_pac_pkgs[@]}"
     else
       log "All selected pacman driver packages resolved as already provided by the system."
     fi
@@ -2609,7 +2754,8 @@ install_missing_autostart_session_if_selected() {
     # shellcheck disable=SC2206
     session_pkgs=($pkgs)
     log "Installing selected autostart session packages for: $SESSION_CHOICE"
-    pacman -S --needed --noconfirm "${session_pkgs[@]}"
+    resolve_all_conflicts_dynamically "${session_pkgs[@]}"
+    pacman -S --needed --noconfirm --ask=4 "${session_pkgs[@]}" || warn "Autostart session package install failed (partial install may have occurred)"
   fi
 }
 
@@ -2631,7 +2777,8 @@ install_selected_dewm_packages() {
   done
   if (( ${#uniq[@]} > 0 )); then
     log "Installing selected DE/WM packages ($DEWM_INSTALL_MODE)"
-    pacman -S --needed --noconfirm "${uniq[@]}"
+    resolve_all_conflicts_dynamically "${uniq[@]}"
+    pacman -S --needed --noconfirm --ask=4 "${uniq[@]}"
   fi
 }
 
@@ -2651,7 +2798,8 @@ ensure_display_manager_selected() {
     fi
   fi
   log "Ensuring display manager is installed/enabled: $DISPLAY_MANAGER_CHOICE"
-  pacman -S --needed --noconfirm "$DISPLAY_MANAGER_CHOICE" || true
+  resolve_all_conflicts_dynamically "$DISPLAY_MANAGER_CHOICE"
+  pacman -S --needed --noconfirm --ask=4 "$DISPLAY_MANAGER_CHOICE" || true
 
   local dm
   for dm in gdm sddm lightdm ly; do
@@ -2662,6 +2810,36 @@ ensure_display_manager_selected() {
       systemctl disable --now "$dm" >/dev/null 2>&1 || true
     fi
   done
+}
+
+install_custom_theme_if_selected() {
+  [[ "$ARCH_BASE_ENABLE" == "yes" ]] || return 0
+  local session
+  session="$(awk '{print $1}' <<< "$DEWM_SELECTED")"
+  [[ -n "$session" ]] || session="$SESSION_CHOICE"
+
+  case "$session" in
+    xfce)
+      log "Installing Arctyx XFCE Theme"
+      resolve_all_conflicts_dynamically arctyx-xfce-theme arctyx-wallpapers
+      pacman -S --needed --noconfirm --ask=4 arctyx-xfce-theme arctyx-wallpapers || warn "XFCE theme install failed."
+      ;;
+    gnome)
+      log "Installing Arctyx GNOME Theme"
+      resolve_all_conflicts_dynamically arctyx-gnome-theme arctyx-wallpapers
+      pacman -S --needed --noconfirm --ask=4 arctyx-gnome-theme arctyx-wallpapers || warn "GNOME theme install failed."
+      ;;
+    plasma)
+      log "Installing Arctyx Plasma Theme"
+      resolve_all_conflicts_dynamically arctyx-plasma-theme arctyx-wallpapers
+      pacman -S --needed --noconfirm --ask=4 arctyx-plasma-theme arctyx-wallpapers || warn "Plasma theme install failed."
+      ;;
+    *)
+      log "Installing Arctyx Generic Wallpapers"
+      resolve_all_conflicts_dynamically arctyx-wallpapers
+      pacman -S --needed --noconfirm --ask=4 arctyx-wallpapers || true
+      ;;
+  esac
 }
 
 apply_manual_login_mode() {
@@ -2815,7 +2993,7 @@ post_install_rustup_default_toolchain() {
 
 post_install_storage_maintenance() {
   if command -v pacman >/dev/null 2>&1; then
-    pacman -S --needed --noconfirm pacman-contrib || warn "Failed to install pacman-contrib for paccache maintenance"
+    pacman -S --needed --noconfirm --ask=4 pacman-contrib || warn "Failed to install pacman-contrib for paccache maintenance"
     if pacman -Q pacman-contrib >/dev/null 2>&1; then
       systemctl enable paccache.timer || warn "Failed to enable paccache.timer"
     fi
@@ -2835,7 +3013,7 @@ post_install_xdg_user_dirs() {
   [[ -n "${DEWM_SELECTED:-}" ]] || list_has "${ARCH_SELECTED_CATEGORIES:-}" "desktop-common" || return 0
   [[ -n "${TARGET_USER:-}" ]] || return 0
 
-  pacman -S --needed --noconfirm xdg-user-dirs || warn "Failed to install xdg-user-dirs"
+  pacman -S --needed --noconfirm --ask=4 xdg-user-dirs || warn "Failed to install xdg-user-dirs"
   if command -v xdg-user-dirs-update >/dev/null 2>&1; then
     # BUG #37: Explicitly pass the target user's HOME so xdg-user-dirs-update runs in the right context
     local target_home
@@ -2844,8 +3022,7 @@ post_install_xdg_user_dirs() {
       target_home="/root"
     fi
     if [[ -n "$target_home" && -d "$target_home" ]]; then
-      env HOME="$target_home" USER="$TARGET_USER" \
-        run_as_target_user_argv xdg-user-dirs-update || warn "xdg-user-dirs-update failed for $TARGET_USER"
+      HOME="$target_home" USER="$TARGET_USER" run_as_target_user_argv xdg-user-dirs-update || warn "xdg-user-dirs-update failed for $TARGET_USER"
     else
       warn "xdg-user-dirs-update skipped: cannot resolve home for $TARGET_USER"
     fi
@@ -2858,7 +3035,7 @@ post_install_firewall() {
     log "UFW already active and configured. Skipping firewall reconfiguration."
     return 0
   fi
-  pacman -S --needed --noconfirm ufw || {
+  pacman -S --needed --noconfirm --ask=4 ufw || {
     warn "Failed to install ufw"
     return 0
   }
@@ -2912,10 +3089,17 @@ gpu_detect_boot_modules() {
     gpu_lines="$(lspci 2>/dev/null | grep -Ei 'VGA|3D|Display' || true)"
   fi
 
+  # Only add nvidia modules if we have a reason to believe they will be present
+  local nv_selected="no"
   if gpu_pkg_selected_or_installed nvidia-open-dkms || gpu_pkg_selected_or_installed nvidia-open || \
      gpu_pkg_selected_or_installed nvidia-dkms || gpu_pkg_selected_or_installed nvidia || \
-     gpu_pkg_selected_or_installed nvidia-utils || \
-     (! gpu_has_explicit_selection && echo "$gpu_lines" | grep -qi 'NVIDIA'); then
+     gpu_pkg_selected_or_installed nvidia-utils; then
+    nv_selected="yes"
+  elif (! gpu_has_explicit_selection && echo "$gpu_lines" | grep -qi 'NVIDIA'); then
+    nv_selected="yes"
+  fi
+
+  if [[ "$nv_selected" == "yes" ]]; then
     modules+=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
   fi
 
@@ -3048,6 +3232,10 @@ configure_gpu_boot_support() {
   if [[ "$changed_mkinit" == "yes" ]]; then
     log "Applied GPU-aware initramfs support: ${gpu_modules}"
     if command -v mkinitcpio >/dev/null 2>&1; then
+      if [[ "$BOOT_SPLASH_MODE" == "plymouth" ]] && ! pacman -Qi plymouth >/dev/null 2>&1; then
+        resolve_all_conflicts_dynamically plymouth
+        pacman -S --needed --noconfirm --ask=4 plymouth || true
+      fi
       mkinitcpio -P || warn "mkinitcpio failed after GPU boot support changes. Continue with caution and regenerate manually."
     fi
   else
@@ -3259,6 +3447,7 @@ ARCH_INSTALL_ZSH="$ARCH_INSTALL_ZSH"
 ARCH_INSTALL_OH_MY_ZSH="$ARCH_INSTALL_OH_MY_ZSH"
 ARCH_SHELL_CHOICE="$ARCH_SHELL_CHOICE"
 ARCH_OPTIMIZE_MIRRORS="$ARCH_OPTIMIZE_MIRRORS"
+ARCH_MIRROR_REGIONS="$ARCH_MIRROR_REGIONS"
 FILE_MANAGER_CHOICE=$FILE_MANAGER_CHOICE
 FILE_MANAGER_MODE=$FILE_MANAGER_MODE
 AUTH_AGENT_CHOICE=$AUTH_AGENT_CHOICE
@@ -3272,8 +3461,8 @@ CUSTOM_AUTOSTART_CMD="$CUSTOM_AUTOSTART_CMD"
 AUTOSTART_INSTALL_MISSING_SESSION=$AUTOSTART_INSTALL_MISSING_SESSION
 AUTOSTART_SESSION_INSTALL_PROFILE=$AUTOSTART_SESSION_INSTALL_PROFILE
 BOOT_TUNE_ENABLE=$BOOT_TUNE_ENABLE
-BOOT_SILENT=$BOOT_SILENT
-BOOT_OS_PROBER=$BOOT_OS_PROBER
+BOOT_SPLASH_MODE=$BOOT_SPLASH_MODE
+BOOT_OS_PROBER_ACTION=$BOOT_OS_PROBER_ACTION
 BOOT_PLYMOUTH_ACTION=$BOOT_PLYMOUTH_ACTION
 BOOTLOADER_ACTION=$BOOTLOADER_ACTION
 BOOTLOADER_REPLACE=$BOOTLOADER_REPLACE
@@ -3304,7 +3493,8 @@ ensure_audio_if_desktop() {
   fi
 
   log "Ensuring desktop audio stack (PipeWire)"
-  pacman -S --needed --noconfirm \
+  resolve_all_conflicts_dynamically pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber
+  pacman -S --needed --noconfirm --ask=4 \
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber || \
     warn "Failed to install one or more PipeWire audio packages"
 }
@@ -3598,7 +3788,7 @@ print_plan() {
     printf '    DE/WM Install Mode: %s\n' "${DEWM_INSTALL_MODE^}"
     printf '    Shell Choice: %s\n' "$(tui_shell_choice_label "$ARCH_SHELL_CHOICE")"
     printf '    Shells: Fish=%s Zsh=%s Oh-My-Zsh=%s\n' "$( [[ "$ARCH_INSTALL_FISH" == "yes" ]] && printf 'Yes' || printf 'No' )" "$( [[ "$ARCH_INSTALL_ZSH" == "yes" ]] && printf 'Yes' || printf 'No' )" "$( [[ "$ARCH_INSTALL_OH_MY_ZSH" == "yes" ]] && printf 'Yes' || printf 'No' )"
-    printf '    Mirror Optimize: %s\n' "$( [[ "$ARCH_OPTIMIZE_MIRRORS" == "yes" ]] && printf 'Yes' || printf 'No' )"
+    printf '    Mirror Selection: %s\n' "$( [[ "$ARCH_OPTIMIZE_MIRRORS" == "yes" ]] && printf '%s' "${ARCH_MIRROR_REGIONS:-auto}" || printf 'off' )"
     printf '    Multilib: %s\n' "$( [[ "$ARCH_ENABLE_MULTILIB" == "yes" ]] && printf 'Yes' || printf 'No' )"
     printf '    Core-Testing: %s\n' "$( [[ "$ARCH_ENABLE_CORE_TESTING" == "yes" ]] && printf 'Yes' || printf 'No' )"
     printf '    Extra-Testing: %s\n' "$( [[ "$ARCH_ENABLE_EXTRA_TESTING" == "yes" ]] && printf 'Yes' || printf 'No' )"

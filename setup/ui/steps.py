@@ -32,6 +32,9 @@ from setup.ui.state import (
     install_profile_label,
     LOGIN_METHOD_CHOICES,
     login_method_label,
+    MIRROR_REGION_CHOICES,
+    MIRROR_COUNTRY_MAP,
+    mirror_selection_summary,
     OS_PROBER_CHOICES,
     os_prober_action_label,
     PACKAGE_CATEGORY_CHOICES,
@@ -802,7 +805,7 @@ def _section_detail(state: WizardState, section_key: str) -> str:
             f"Package Categories: {', '.join(package_labels) if package_labels else 'None Yet'}",
             f"Shell Choice: {shell_label(state.shell_choice)}",
             f"AUR Helper: {aur_helper_label(state.aur_helper)}",
-            f"Mirror Optimize: {_bool_label(state.optimize_mirrors)} | Multilib: {_bool_label(state.enable_multilib)} | Chaotic AUR: {_bool_label(state.enable_chaotic_aur)}",
+            f"Mirrors: {mirror_selection_summary(state.optimize_mirrors, state.mirror_regions)} | Multilib: {_bool_label(state.enable_multilib)} | Chaotic AUR: {_bool_label(state.enable_chaotic_aur)}",
         ])
 
     if section_key == "apps":
@@ -915,7 +918,7 @@ def step_packages(ui: WizardUI, state: WizardState) -> None:
             "Packages",
             [
                 ("groups", "Package Groups", package_summary, ""),
-                ("mirrors", "Optimize Mirrors", _bool_label(state.optimize_mirrors), "Refresh pacman mirrorlist", "Runs reflector to refresh pacman mirrors for faster and more reliable downloads.\nPackages: reflector"),
+                ("mirrors", "Mirror Selection", mirror_selection_summary(state.optimize_mirrors, state.mirror_regions), "Arch Wiki style reflector selection", "Choose auto-fastest selection or restrict reflector to one or more world regions.\nMethod: reflector --latest 20 --protocol https --sort rate [--country ...] --save /etc/pacman.d/mirrorlist\nPackages: reflector"),
                 ("multilib", "Enable Multilib", _bool_label(state.enable_multilib), "Needed for 32-bit libraries", "Required by many 32-bit libraries and common apps such as Steam or Wine.\nPackages enabled via repo: lib32-* packages become available"),
                 ("chaotic", "Enable Chaotic AUR", _bool_label(state.enable_chaotic_aur), "Extra prebuilt AUR packages", "Adds the Chaotic AUR binary repository so many AUR packages can be installed as prebuilt pacman packages instead of compiling locally.\nPackages/Config: chaotic-keyring, chaotic-mirrorlist, pacman repo block"),
                 ("shell", "Shell", shell_label(state.shell_choice), "", _shell_detail(state.shell_choice)),
@@ -938,9 +941,30 @@ def step_packages(ui: WizardUI, state: WizardState) -> None:
             if selected != BACK:
                 state.package_categories = selected
         elif choice == "mirrors":
-            selected = ui.ask_yes_no("Mirror Optimization", "Optimize pacman mirrors with reflector?", state.optimize_mirrors)
+            selected = ui.ask_checkbox(
+                "Mirror Selection",
+                [(value, label, detail) for value, label, detail in MIRROR_REGION_CHOICES],
+                state.mirror_regions if state.optimize_mirrors else [],
+                subtitle="Select Auto or one or more regions for Reflector",
+                toggle_map=MIRROR_COUNTRY_MAP,
+            )
             if selected != BACK:
-                state.optimize_mirrors = selected
+                if not selected:
+                    state.optimize_mirrors = False
+                    state.mirror_regions = []
+                elif "auto" in selected:
+                    state.optimize_mirrors = True
+                    state.mirror_regions = ["auto"]
+                else:
+                    state.optimize_mirrors = True
+                    # Expand regions to countries if "region:" is selected
+                    final_selection = []
+                    for s in selected:
+                        if s.startswith("region:"):
+                            final_selection.extend(MIRROR_COUNTRY_MAP.get(s, []))
+                        else:
+                            final_selection.append(s)
+                    state.mirror_regions = list(set(final_selection))
         elif choice == "multilib":
             selected = ui.ask_yes_no("Multilib Repository", "Enable multilib repository?", state.enable_multilib)
             if selected != BACK:
@@ -1259,11 +1283,36 @@ def step_desktop(ui: WizardUI, state: WizardState) -> None:
         if choice == "done":
             return
         if choice == "sessions":
+            def de_conflict_rules(selected: set[str]) -> dict[str, str]:
+                blocked = {}
+                # Mutter-based Group
+                mutter_group = {"budgie", "gnome", "pantheon"}
+                active_mutter = selected.intersection(mutter_group)
+                if active_mutter:
+                    trigger = list(active_mutter)[0]
+                    trigger_label = desktop_label(trigger)
+                    for item in mutter_group:
+                        if item != trigger:
+                            blocked[item] = f"Blocked: Only one Mutter-based DE can be selected. ({trigger_label} is selected)"
+                
+                # KWin-based Group
+                kwin_group = {"plasma", "deepin"}
+                active_kwin = selected.intersection(kwin_group)
+                if active_kwin:
+                    trigger = list(active_kwin)[0]
+                    trigger_label = desktop_label(trigger)
+                    for item in kwin_group:
+                        if item != trigger:
+                            blocked[item] = f"Blocked: Plasma and Deepin cannot be installed together on one system. ({trigger_label} is selected)"
+                
+                return blocked
+
             selected = ui.ask_checkbox(
                 "Desktop / WM Choices",
                 [(value, label, _desktop_choice_detail(value, label), _session_status_text(value, state)) for value, label in DESKTOP_CHOICES],
                 state.desktop_sessions,
                 subtitle="Select one or more desktop/window manager sessions",
+                rule_callback=de_conflict_rules,
             )
             if selected != BACK:
                 state.desktop_sessions = selected
@@ -1565,13 +1614,14 @@ def step_boot(ui: WizardUI, state: WizardState) -> None:
                 state.boot_os_prober_action = selected
 def step_summary(ui: WizardUI, state: WizardState) -> bool | str:
     report = build_review_report(state)
-    return ui.show_review(
+    result = ui.show_review(
         state.summary_lines(),
         report.validations,
         report.warnings,
         report.recommendations,
         report.ready,
     )
+    return result
 
 
 def configure_user_section(ui: WizardUI, state: WizardState) -> None:

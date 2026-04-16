@@ -18,6 +18,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "packages": {
         "base_enable": True,
         "optimize_mirrors": False,
+        "mirror_regions": [],
         "categories": ["core-system", "cli-utils"],
         "shell_choice": "bash",
         "aur_helper": "skip",
@@ -101,6 +102,7 @@ def normalize_state(state: dict[str, Any] | None) -> dict[str, Any]:
         normalized["user"]["target"] = DEFAULT_STATE["user"]["target"]
 
     for path in (
+        ("packages", "mirror_regions"),
         ("packages", "categories"),
         ("apps", "selected"),
         ("apps", "ides"),

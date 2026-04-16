@@ -32,12 +32,12 @@ def run_app(argv: list[str] | None = None) -> int:
 
     executor = BackendExecutor(state_path=Path(state_store.path))
 
-    def _run_backend_action(action: str) -> int:
+    def _run_backend_action(action: str, env_vars: dict[str, str] | None = None) -> int:
         if shutil.which("jq") is None:
             print("Arctyx backend needs `jq` to read the JSON state. Please install `jq` first, then run again.")
             return 1
         try:
-            executor.run(action)
+            executor.run(action, env_vars=env_vars)
         except KeyboardInterrupt:
             print("\nArctyx backend action was cancelled by the user.")
             return 130
@@ -67,7 +67,10 @@ def run_app(argv: list[str] | None = None) -> int:
     app = WizardInstaller(state_path=state_store.path)
     result = app.run()
     if result in {"apply", "plan", "rollback", "uninstall"}:
-        exit_code = _run_backend_action(result)
+        env = {}
+        if hasattr(app, "state") and getattr(app.state, "de_auto_swap", False):
+            env["DE_AUTO_SWAP"] = "yes"
+        exit_code = _run_backend_action(result, env_vars=env)
         should_delete = (
             exit_code == 0
             and result == "apply"

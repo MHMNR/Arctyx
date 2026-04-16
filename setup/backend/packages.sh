@@ -15,12 +15,23 @@ backend_packages_need_pacman_db() {
 }
 
 backend_packages_prepare() {
-  if backend_packages_need_pacman_db; then
-    ensure_pacman_db_ready
+  # 1. Ensure databases are ready BEFORE we run the unified probe
+  ensure_pacman_db_ready
+  
+  # 2. Force a unified resolution of all intended packages
+  if command -v resolve_arch_plan >/dev/null 2>&1; then
+    log "Building unified installation plan and probing for conflicts..."
+    resolve_arch_plan >/dev/null 2>&1 || true
+    
+    # 3. Run the dynamic conflict resolver on the aggregate list
+    if [[ ${#ARCH_TOTAL_PACMAN_PKGS[@]} -gt 0 ]]; then
+      resolve_all_conflicts_dynamically "${ARCH_TOTAL_PACMAN_PKGS[@]}"
+    fi
   fi
 }
 
 backend_packages_apply() {
+
   install_arch_base_if_selected
   install_oh_my_zsh_if_selected
   set_default_shell_if_selected
