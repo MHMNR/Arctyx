@@ -98,11 +98,11 @@ arctyx/
 Arctyx uses a three-layer architecture to keep things clean and debuggable:
 
 ```
-[ Python Wizard UI ]  ←  what you interact with
+[ Python Wizard UI ]  ←  What you interact with.
         ↓
-[ JSON State File ]   ←  stores your selections
+[ JSON State File ]   ←  Stores your selections.
         ↓
-[ Bash Backend ]      ←  does the actual system work
+[ Bash Backend ]      ←  Does the actual system work.
 ```
 
 This separation means the UI never directly touches your system — the backend scripts handle all real changes. Easy to review, easy to extend.
