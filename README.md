@@ -54,7 +54,7 @@ It's not a full disk installer. It's the tool you run **after** Arch is booted, 
 git clone https://github.com/MHMNR/Arctyx.git
 ```
 
-### Enter The Project Folder
+### Enter Arctyx Folder
 ```bash
 cd Arctyx
 ```
