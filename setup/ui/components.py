@@ -116,7 +116,7 @@ class WizardUI:
         # Warning:    #F9E2AF -> 976, 886, 686
         # Muted:      #6C7086 -> 424, 439, 525
 
-        if curses.can_change_color():
+        if curses.can_change_color() and curses.COLORS >= 16:
             curses.init_color(11, 804, 839, 957)  # Fg
             curses.init_color(12, 537, 706, 980)  # Primary
             curses.init_color(13, 953, 545, 659)  # Secondary/Error
@@ -131,7 +131,7 @@ class WizardUI:
             curses.init_pair(4, 14, bg) # Accent on Bkg
             curses.init_pair(5, 13, bg) # Secondary on Bkg
             curses.init_pair(6, 16, bg) # Muted on Bkg
-        else:
+        elif curses.COLORS >= 256:
             # Fallback to standard 256 colors
             bg = -1
             curses.init_pair(1, 111, bg) # Blue
@@ -140,6 +140,10 @@ class WizardUI:
             curses.init_pair(4, 120, bg) # Green
             curses.init_pair(5, 210, bg) # Red/Pink
             curses.init_pair(6, 244, bg) # Muted
+        else:
+            # Low-color environment (e.g. 8-color TTY)
+            # Pairs 1-6 were already initialized to standard colors at lines 75-80
+            pass
 
         palette["title"] = curses.color_pair(1) | curses.A_BOLD
         palette["subtitle"] = curses.color_pair(6) | curses.A_DIM
